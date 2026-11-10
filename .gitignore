@@ -1,0 +1,27 @@
+# Dependencies & Build Outputs
+node_modules/
+.next/
+out/
+dist/
+target/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.tsbuildinfo
+.venv/
+venv/
+bin/
+*.exe
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+.coachbuddy_vault.json
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log

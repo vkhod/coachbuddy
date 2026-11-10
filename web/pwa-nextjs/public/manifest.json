@@ -1,0 +1,18 @@
+{
+  "name": "CoachBuddy — Tactical Box Session Planner & Floor Companion",
+  "short_name": "CoachBuddy",
+  "description": "AI-powered WOD Session Planner, 4-Tier Scaling Matrix, BYOK Vault, and Live Gym Floor Timer for CrossFit & Functional Fitness Coaches.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B0F17",
+  "theme_color": "#CCFF00",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
