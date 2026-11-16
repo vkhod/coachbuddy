@@ -23,15 +23,17 @@ Architecture & System Design documentation: [docs/ARCHITECTURE.md](docs/ARCHITEC
 ### Option A: Full Polyglot Stack via Docker Compose
 ```bash
 cp .env.example .env
-docker compose up --build
+# Fill in every secret in .env; generate each one with: openssl rand -hex 32
+docker compose -f compose.yml -f compose.dev.yml up --build
 ```
+`compose.yml` publishes no ports. `compose.dev.yml` publishes them on `127.0.0.1` for local development only.
 - **CoachBuddy PWA**: http://localhost:3000
 - **Go API Gateway**: http://localhost:8080/health
 - **Python Google ADK Service**: http://localhost:8081/health
 - **Rust MCP Server**: http://localhost:8082/health
 
-### Option B: Local Development (Resilient Standalone Mode)
-Every service is engineered with graceful connection fallbacks so you can also run and test services individually on your host machine:
+### Option B: Running a Single Service on the Host
+Services need their settings from the environment (see `.env.example`); there are no default secrets. The databases come from Option A.
 
 1. **Go API Gateway (`:8080`)**:
    ```bash

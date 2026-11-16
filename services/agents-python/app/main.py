@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hmac
 import json
 import logging
 import os
@@ -27,10 +28,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("coachbuddy.main")
 
-INTERNAL_GATEWAY_TOKEN = os.getenv(
-    "INTERNAL_GATEWAY_TOKEN",
-    "coachbuddy-internal-orchestration-secret",
-)
+# Shared secret the gateway sends as X-Internal-Gateway-Token. Required; there is no default.
+INTERNAL_GATEWAY_TOKEN = os.getenv("INTERNAL_GATEWAY_TOKEN", "").strip()
 
 
 class EventStreamManager:
@@ -89,6 +88,8 @@ pipeline_executor = CoachBuddyPipelineExecutor(mcp_client=mcp_client)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+    if not INTERNAL_GATEWAY_TOKEN:
+        raise RuntimeError("INTERNAL_GATEWAY_TOKEN is not set (see .env.example)")
     await event_stream.connect()
     yield
     await event_stream.close()
@@ -183,7 +184,9 @@ async def orchestrate_wod_session(
     req: OrchestrateRequest,
     x_internal_gateway_token: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    if x_internal_gateway_token != INTERNAL_GATEWAY_TOKEN:
+    if not INTERNAL_GATEWAY_TOKEN or not hmac.compare_digest(
+        (x_internal_gateway_token or "").encode(), INTERNAL_GATEWAY_TOKEN.encode()
+    ):
         raise HTTPException(
             status_code=403,
             detail="Forbidden: invalid or missing X-Internal-Gateway-Token header.",

@@ -7,7 +7,7 @@ import (
 )
 
 func TestTokenManager_GenerateAndValidate(t *testing.T) {
-	tm := NewTokenManager("test-secret-key-32-chars-long-12345")
+	tm := mustTokenManager(t)
 	token, err := tm.GenerateToken("coach-123", "coach@test.com")
 	if err != nil {
 		t.Fatalf("failed to generate token: %v", err)
@@ -26,8 +26,8 @@ func TestTokenManager_GenerateAndValidate(t *testing.T) {
 }
 
 func TestTokenManager_Middleware_RejectsInvalidToken(t *testing.T) {
-	tm := NewTokenManager("test-secret-key-32-chars-long-12345")
-	handler := tm.Middleware("demo-fallback")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tm := mustTokenManager(t)
+	handler := tm.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -42,23 +42,39 @@ func TestTokenManager_Middleware_RejectsInvalidToken(t *testing.T) {
 	}
 }
 
-func TestTokenManager_Middleware_AllowsDemoWhenNoToken(t *testing.T) {
-	tm := NewTokenManager("test-secret-key-32-chars-long-12345")
-	var capturedCoachID string
-	handler := tm.Middleware("demo-coach-id")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedCoachID = GetCoachID(r.Context())
+func TestTokenManager_Middleware_RejectsMissingToken(t *testing.T) {
+	tm := mustTokenManager(t)
+	called := false
+	handler := tm.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	req := httptest.NewRequest("GET", "/api/v1/auth/me", nil)
 	rr := httptest.NewRecorder()
-
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("expected status 200 OK for demo fallback, got %d", rr.Code)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 without a token, got %d", rr.Code)
 	}
-	if capturedCoachID != "demo-coach-id" {
-		t.Errorf("expected demo coach ID, got %s", capturedCoachID)
+	if called {
+		t.Error("handler must not run without a token")
 	}
+}
+
+func TestNewTokenManager_RejectsMissingOrShortSecret(t *testing.T) {
+	for _, secret := range []string{"", "   ", "too-short-secret"} {
+		if _, err := NewTokenManager(secret); err == nil {
+			t.Errorf("expected an error for secret %q", secret)
+		}
+	}
+}
+
+func mustTokenManager(t *testing.T) *TokenManager {
+	t.Helper()
+	tm, err := NewTokenManager("test-secret-key-32-chars-long-12345")
+	if err != nil {
+		t.Fatalf("NewTokenManager: %v", err)
+	}
+	return tm
 }

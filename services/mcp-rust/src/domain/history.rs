@@ -256,6 +256,9 @@ mod tests {
             summary.game_title,
             "Phase 1: Partner Mirror Footwork & Plank Tap Duel"
         );
-        assert_eq!(summary.drill_names, vec!["Scapular Pulls", "Overhead Squat Therapy"]);
+        assert_eq!(
+            summary.drill_names,
+            vec!["Scapular Pulls", "Overhead Squat Therapy"]
+        );
     }
 }

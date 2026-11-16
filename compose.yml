@@ -1,0 +1,136 @@
+# Coach Buddy: shared service definitions for every environment.
+# No host ports are published here. Local development adds them with compose.dev.yml:
+#   docker compose -f compose.yml -f compose.dev.yml up --build
+# Every secret is required (":?" fails fast when it is missing). Copy .env.example to .env first.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: coachbuddy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: coachbuddy
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coachbuddy -d coachbuddy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    logging: *default-logging
+    # Cap the WiredTiger cache; by default MongoDB takes about half of (host RAM - 1 GB).
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: coachbuddy
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?set MONGO_PASSWORD in .env}
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --maxmemory-policy volatile-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mcp-rust:
+    build:
+      context: ./services/mcp-rust
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      RUST_LOG: info
+      PORT: 8082
+      MONGO_URI: mongodb://coachbuddy:${MONGO_PASSWORD}@mongodb:27017/?authSource=admin
+      MONGO_DB: coachbuddy
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  agents-python:
+    build:
+      context: ./services/agents-python
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      PORT: 8081
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      MCP_RUST_URL: http://mcp-rust:8082
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:?set INTERNAL_GATEWAY_TOKEN in .env}
+      DEFAULT_GEMINI_API_KEY: ${DEFAULT_GEMINI_API_KEY:-}
+      DEFAULT_OPENAI_API_KEY: ${DEFAULT_OPENAI_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      mcp-rust:
+        condition: service_started
+
+  gateway-go:
+    build:
+      context: ./services/gateway-go
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      GATEWAY_PORT: 8080
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      MASTER_ENCRYPTION_KEY_HEX: ${MASTER_ENCRYPTION_KEY_HEX:?set MASTER_ENCRYPTION_KEY_HEX in .env}
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:?set INTERNAL_GATEWAY_TOKEN in .env}
+      POSTGRES_DSN: postgres://coachbuddy:${POSTGRES_PASSWORD}@postgres:5432/coachbuddy?sslmode=disable
+      MONGO_URI: mongodb://coachbuddy:${MONGO_PASSWORD}@mongodb:27017/?authSource=admin
+      MONGO_DB: coachbuddy
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      AGENTS_SERVICE_URL: http://agents-python:8081
+      MCP_RUST_URL: http://mcp-rust:8082
+      PUBLIC_SHARE_BASE_URL: ${PUBLIC_SHARE_BASE_URL:-http://localhost:3000/s}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      agents-python:
+        condition: service_started
+
+  pwa-nextjs:
+    build:
+      context: ./web/pwa-nextjs
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      INTERNAL_GATEWAY_URL: http://gateway-go:8080
+    depends_on:
+      - gateway-go
+
+volumes:
+  pgdata:
+  mongodata:
+  redisdata:

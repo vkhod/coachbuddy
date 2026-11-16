@@ -1,0 +1,18 @@
+# Secret scanning rules for CI. Default rules plus narrow exceptions for known false positives.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fake API keys used as fixtures in unit tests"
+paths = [
+  '''_test\.go$''',
+  '''^services/agents-python/tests/''',
+]
+
+[[allowlists]]
+description = "Feature name in the gateway health response, not a key"
+regexes = ['''aes-256-gcm-byok-vault''']
+
+[[allowlists]]
+description = "Initial commit: public placeholder defaults (0123456789abcdef... master key), removed in Phase 0"
+commits = ["98a3a94231eeeefe7e49e0b197bd4ca67504f063"]

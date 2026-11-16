@@ -1,0 +1,5 @@
+# Never send local secrets into an image
+.coachbuddy_vault.json
+.env
+.env.*
+*.log

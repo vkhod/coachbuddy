@@ -73,3 +73,11 @@ func TestMaskKey(t *testing.T) {
 		t.Fatalf("expected short key to mask completely, got %s", short)
 	}
 }
+
+func TestNewVault_RequiresKey(t *testing.T) {
+	for _, k := range []string{"", "   "} {
+		if _, err := NewVault(k); err == nil {
+			t.Errorf("expected an error for empty master key %q", k)
+		}
+	}
+}

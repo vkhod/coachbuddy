@@ -22,7 +22,9 @@ This directory contains `gateway-go` (`:8080`), the Go 1.23+ API Gateway, JWT Au
    - Never return decrypted keys in any HTTP response; use `MaskAPIKey` before serializing `ProviderKeyStatus` or `VaultSettings`.
    - Decrypted keys may only be attached to internal outbound requests to `agents-python` (`:8081`).
 2. **Resilient Storage & Upstream Fallbacks**:
-   - Preserve graceful degradation in `internal/store/` and `internal/handlers/` when Postgres, MongoDB, Redis, `agents-python`, or `mcp-rust` are unreachable in local standalone mode.
+   - If `agents-python` or `mcp-rust` is unreachable or returns an error, return the error to the client (for example `502` with a clear message). Never build or substitute plan content in the gateway.
+   - Postgres, MongoDB and Redis are required in every environment. The in-memory fallbacks in `internal/store/` are removed during the redesign; do not add new ones. Use in-memory fakes only in tests.
+   - Every authenticated route requires a valid token (no demo coach), and every session, share and key operation checks that the record belongs to the caller.
 3. **SSE Streaming**:
    - Ensure SSE endpoints set `Content-Type: text/event-stream`, `Cache-Control: no-cache`, and flush via `http.Flusher` on each event.
 

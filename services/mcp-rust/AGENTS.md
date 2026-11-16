@@ -19,8 +19,9 @@ This directory contains `mcp-rust` (`:8082`), a high-performance, deterministic 
 1. **Deterministic & Allocation-Light Domain Logic**:
    - Keep `src/domain/timeline.rs` and `src/domain/qr.rs` pure, deterministic, and covered by unit tests.
    - Never mutate coach notes or labels during timeline math verification—only report `issues`, `discrepancyMinutes`, `feasibilityStatus` (`OPTIMAL`, `TIGHT`, `INVALID`), and `coachWarnings`.
-2. **Database-Optional Cold Start**:
-   - If `MONGODB_URI` is unset or unreachable, `AppState.db` is `None`. `get_recent_coaching_history` must gracefully return an empty `recentWarmups` list rather than failing the MCP call.
+2. **MongoDB Required**:
+   - `MONGO_URI` is required in every environment. The current DB-less cold start (`AppState.db = None`, empty `recentWarmups`) is removed during the redesign; a failed history query must surface as an MCP error, not as an empty result.
+   - Never log connection strings with credentials; use `redact_uri` in `src/main.rs`.
 3. **Dual Interface Parity**:
    - Whenever adding or updating a tool in `src/domain/`, expose it through both the MCP JSON-RPC handler (`src/mcp.rs`) and the direct internal REST routes (`src/main.rs`), using `#[serde(rename_all = "camelCase")]` on input/output structs.
 

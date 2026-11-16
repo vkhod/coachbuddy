@@ -21,9 +21,10 @@ This directory contains `pwa-nextjs` (`:3000`), the TypeScript + Next.js 14 (App
 2. **Coach Floor Mode & Screen WakeLock**:
    - Floor Mode must maintain a large countdown timer with `Play/Pause`, `Next Block`, and `Reset` controls and safely request/release `navigator.wakeLock` (with graceful fallback on unsupported browsers).
 3. **BYOK Vault Safety**:
-   - Never store raw LLM API keys in `localStorage` after saving to the vault; send them to `gateway-go` (`:8080`) for AES-256-GCM encryption and display only masked key badges returned by the API (` demo/offline` mode should clearly indicate local status).
-4. **Resilient API Client**:
-   - If `gateway-go` (`NEXT_PUBLIC_API_URL`, default `http://localhost:8080`) is unreachable, preserve client-side fallback behavior so coaches can still preview WOD generation, Floor Mode, and QR sharing without hard crashes.
+   - Never store raw LLM API keys in `localStorage` after saving to the vault; send them to `gateway-go` (`:8080`) for AES-256-GCM encryption and display only masked key badges returned by the API.
+4. **No Client-Side Fallbacks**:
+   - If `gateway-go` (`NEXT_PUBLIC_API_URL`, default `http://localhost:8080`) is unreachable or returns an error, show the error with a retry action. Never build, preview or store a locally generated plan, API key or share link.
+   - The existing fallbacks in `src/lib/api.ts` are removed during the redesign; do not add new ones.
 
 ---
 

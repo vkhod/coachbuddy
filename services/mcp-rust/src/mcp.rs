@@ -128,12 +128,8 @@ pub async fn execute_named_tool(
 ) -> Result<Value, String> {
     match tool_name {
         "get_recent_coaching_history" => {
-            let parsed: HistoryQueryInput = serde_json::from_value(args).map_err(|e| {
-                format!(
-                    "Invalid arguments for get_recent_coaching_history: {}",
-                    e
-                )
-            })?;
+            let parsed: HistoryQueryInput = serde_json::from_value(args)
+                .map_err(|e| format!("Invalid arguments for get_recent_coaching_history: {}", e))?;
             if let Some(db) = &state.db {
                 let out = query_recent_coaching_history(db, parsed).await?;
                 serde_json::to_value(out).map_err(|e| e.to_string())
