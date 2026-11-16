@@ -23,7 +23,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-const DefaultDemoCoachID = "00000000-0000-0000-0000-000000000001"
+// ErrCoachNotFound is returned when a coach ID has no account.
+var ErrCoachNotFound = errors.New("coach not found")
 
 type DataStore struct {
 	mu          sync.RWMutex
@@ -34,13 +35,14 @@ type DataStore struct {
 	redisClient *redis.Client
 
 	// In-memory synchronized store (acts as fast cache + standalone fallback)
-	vaultFile   string
-	coaches     map[string]*models.Coach
-	coachesByEm map[string]string
-	apiKeys     map[string]*models.LLMAPIKey
-	agentPrefs  map[string]map[string]*models.AgentModelPref // coachID -> agentRole -> pref
-	sessions    map[string]map[string]interface{}            // sessionID -> document
-	sharedLinks map[string]*models.SharedLink
+	vaultFile    string
+	coaches      map[string]*models.Coach
+	coachesByEm  map[string]string
+	apiKeys      map[string]*models.LLMAPIKey
+	agentPrefs   map[string]map[string]*models.AgentModelPref // coachID -> agentRole -> pref
+	defaultPrefs map[string]*models.AgentModelPref            // agentRole -> default pref for coaches without their own
+	sessions     map[string]map[string]interface{}            // sessionID -> document
+	sharedLinks  map[string]*models.SharedLink
 }
 
 type diskKeyRecord struct {
@@ -111,16 +113,17 @@ func (ds *DataStore) saveLocalVaultFileLocked() {
 
 func NewDataStore(ctx context.Context, vault *crypto.Vault, pgDSN, mongoURI, mongoDBName, redisURL string) *DataStore {
 	ds := &DataStore{
-		vault:       vault,
-		coaches:     make(map[string]*models.Coach),
-		coachesByEm: make(map[string]string),
-		apiKeys:     make(map[string]*models.LLMAPIKey),
-		agentPrefs:  make(map[string]map[string]*models.AgentModelPref),
-		sessions:    make(map[string]map[string]interface{}),
-		sharedLinks: make(map[string]*models.SharedLink),
+		vault:        vault,
+		coaches:      make(map[string]*models.Coach),
+		coachesByEm:  make(map[string]string),
+		apiKeys:      make(map[string]*models.LLMAPIKey),
+		agentPrefs:   make(map[string]map[string]*models.AgentModelPref),
+		defaultPrefs: make(map[string]*models.AgentModelPref),
+		sessions:     make(map[string]map[string]interface{}),
+		sharedLinks:  make(map[string]*models.SharedLink),
 	}
 
-	ds.seedDemoData()
+	ds.seedDefaultAgentPrefs()
 
 	// 1. Optional PostgreSQL connection
 	if pgDSN != "" {
@@ -130,7 +133,6 @@ func NewDataStore(ctx context.Context, vault *crypto.Vault, pgDSN, mongoURI, mon
 			if err := pool.Ping(pgCtx); err == nil {
 				ds.pgPool = pool
 				log.Println("[store] Connected to PostgreSQL")
-				ds.ensureDemoCoachInPostgres(pgCtx)
 			} else {
 				log.Printf("[store] PostgreSQL ping failed (%v) — using resilient in-memory SQL fallback", err)
 				pool.Close()
@@ -185,217 +187,18 @@ func (ds *DataStore) Redis() *redis.Client {
 	return ds.redisClient
 }
 
-func (ds *DataStore) seedDemoData() {
-	hash, _ := auth.HashPassword("coachbuddy123")
-	demoCoach := &models.Coach{
-		ID:                      DefaultDemoCoachID,
-		Email:                   "coach@crossfitbox.com",
-		PasswordHash:            hash,
-		DisplayName:             "Coach Alex (Fill-In)",
-		BoxName:                 "CrossFit Iron Horizon",
-		DefaultClassDurationMin: 60,
-		CreatedAt:               time.Now().Add(-24 * time.Hour),
-	}
-	ds.coaches[demoCoach.ID] = demoCoach
-	ds.coachesByEm[strings.ToLower(demoCoach.Email)] = demoCoach.ID
-
-	roles := []struct {
-		role  string
-		model string
-	}{
-		{"global", "gemini/gemini-3.8-flash"},
-		{"parser", "gemini/gemini-3.8-flash"},
-		{"warmup", "gemini/gemini-3.8-flash"},
-		{"scaling", "gemini/gemini-3.8-flash"},
-		{"timeline", "gemini/gemini-3.8-flash"},
-	}
-	ds.agentPrefs[DefaultDemoCoachID] = make(map[string]*models.AgentModelPref)
-	for _, r := range roles {
-		ds.agentPrefs[DefaultDemoCoachID][r.role] = &models.AgentModelPref{
-			ID:              uuid.NewString(),
-			CoachID:         DefaultDemoCoachID,
-			AgentRole:       r.role,
+// seedDefaultAgentPrefs sets the model routing used for any coach who has not chosen their own.
+// It seeds no coach accounts and no sample sessions.
+func (ds *DataStore) seedDefaultAgentPrefs() {
+	for _, role := range []string{"global", "parser", "warmup", "scaling", "timeline"} {
+		ds.defaultPrefs[role] = &models.AgentModelPref{
+			ID:              "default-" + role,
+			AgentRole:       role,
 			Provider:        "gemini",
-			ModelIdentifier: r.model,
+			ModelIdentifier: "gemini/gemini-3.8-flash",
 			UpdatedAt:       time.Now(),
 		}
 	}
-
-	// Seed a rich sample WOD session so History & Share work out of the box
-	sampleID := "session-seed-broomstick-thrusters"
-	ds.sessions[sampleID] = map[string]interface{}{
-		"_id":       sampleID,
-		"sessionId": sampleID,
-		"coachId":   DefaultDemoCoachID,
-		"status":    "completed",
-		"title":     "Heavy Front Squat 3RM + Thruster & Pull-Up Engine",
-		"createdAt": time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
-		"input": map[string]interface{}{
-			"rawText":               "Part A (Strength - 15 min): Find a Heavy 3-Rep Max Front Squat from the rack.\nPart B (Engine / Metcon - 12 min cap): 21-15-9 reps for time of Thrusters (95/65 lb) and Pull-Ups.",
-			"coachConstraints":      "Today I want to use mostly a broomstick (PVC) for the warm-up and start with a fun reaction game to wake everyone up.",
-			"targetDurationMinutes": 60,
-			"equipmentFocus":        []string{"pvc_broomstick", "barbell", "pullup_rig"},
-		},
-		"parsedWod": map[string]interface{}{
-			"blocks": []map[string]interface{}{
-				{"type": "strength", "name": "3RM Front Squat", "allocatedMinutes": 15},
-				{"type": "metcon", "name": "21-15-9 Thrusters & Pull-Ups", "allocatedMinutes": 12},
-			},
-			"movements":     []string{"Front Squat", "Thruster", "Pull-Up"},
-			"primaryJoints": []string{"shoulders", "thoracic_spine", "hips", "knees", "wrists"},
-			"stimulus":      "Heavy CNS lower-body loading followed by a high-heart-rate glycolytic sprint taxing front rack & grip.",
-		},
-		"warmup": map[string]interface{}{
-			"style":           "Gamified PVC Broomstick Flow",
-			"durationMinutes": 12,
-			"phases": []map[string]interface{}{
-				{
-					"name":            "Phase 1: PVC Circle Drop & Callout (Reaction Game)",
-					"durationMinutes": 4,
-					"instructions":    "Athletes form a tight circle holding a broomstick/PVC vertically on the floor. Coach calls 'LEFT', 'RIGHT', or 'SPIN'. Athletes must leave their stick and catch the neighbor's stick before it hits the rubber floor. Drop = 3 synchronized air squats with a jump!",
-					"coachingGoal":    "Break the ice, spike alertness, get laughter on the floor, and warm up hip/ankle flexion dynamically.",
-				},
-				{
-					"name":            "Phase 2: Broomstick Thoracic, Wrist & Squat Therapy Flow",
-					"durationMinutes": 8,
-					"instructions":    "Continuous guided movement flow using the broomstick before touching an empty barbell.",
-					"coachingGoal":    "Open external shoulder rotation, thoracic extension, and bottom-of-squat posture for Front Squats & Thrusters.",
-					"drills": []map[string]interface{}{
-						{"name": "PVC Pass-Throughs + Around-the-Worlds", "reps": "10 + 5 each way", "focus": "Pec minor & shoulder capsule opening"},
-						{"name": "Broomstick Front Rack Stretch (Elbows High)", "reps": "30 sec / side", "focus": "Triceps & wrist extension for crisp front rack"},
-						{"name": "PVC Kang Squats (Good Morning into Deep Squat)", "reps": "8 slow reps", "focus": "Hamstring tension + upright chest in the hole"},
-						{"name": "Broomstick Sotts Press + Tempo Thruster", "reps": "6 + 6 reps", "focus": "Pressing mechanics from the bottom of the squat"},
-						{"name": "Rig Scapular Pulls + Kip Swings", "reps": "10 + 10 reps", "focus": "Lat engagement and shoulder safety on the rig"},
-					},
-				},
-			},
-		},
-		"exercises": []map[string]interface{}{
-			{
-				"name":     "Front Squat",
-				"category": "Strength",
-				"cues": map[string]interface{}{
-					"external": []string{
-						"Point your elbow lasers straight at the front wall",
-						"Spread the gym floor apart with your shoes on the way up",
-						"Drive your shoulders into the bar first out of the bottom",
-					},
-					"internal": []string{
-						"Big 360-degree belly breath at the top and lock your ribs down",
-						"Squeeze your upper back tight so the bar sits on a shelf of muscle",
-					},
-					"commonFaults": []map[string]interface{}{
-						{"fault": "Elbows dropping in the bottom of the hole", "fix": "Cue: 'Punch your elbows up to the ceiling before your hips rise'"},
-						{"fault": "Heels lifting / knees shooting forward early", "fix": "Cue: 'Sit your hips straight down between your heels and grip the floor with your whole foot'"},
-					},
-				},
-				"scaling": map[string]interface{}{
-					"rxPlus":         "3-second pause at the bottom of the 1st rep of every set (3RM with pause)",
-					"scaled":         "5x4 Front Squat at moderate load focusing on perfect elbow position, or Heavy Goblet Squat",
-					"seniorsMasters": "Front Squat to a 14-16\" Box (consistent depth) or Dual Kettlebell/Dumbbell Front Squat (easier on wrists/shoulders)",
-					"injured": map[string]interface{}{
-						"wristOrShoulder": "Cross-arm Zombie Front Squat, Strap-Grip Front Squat (holding lifting straps), or Back Squat",
-						"kneePain":        "Slow 3-1-1 Tempo Box Squat above parallel with vertical shins, or Heavy Romanian Deadlift (RDL)",
-						"lowerBack":       "Belt Squat / Bulgarian Split Squat with dumbbells (unloads axial spinal compression)",
-					},
-				},
-			},
-			{
-				"name":     "Thruster",
-				"category": "Metcon",
-				"cues": map[string]interface{}{
-					"external": []string{
-						"Launch the bar off your shoulders like a cannon using your hip pop",
-						"Get your ears in front of your biceps at the top lockout",
-						"Wait until the bar touches your shoulders before starting the next squat",
-					},
-					"internal": []string{
-						"Exhale sharply at the top of the press; inhale on the descent",
-						"Keep your core braced as the bar crashes back to the rack",
-					},
-					"commonFaults": []map[string]interface{}{
-						{"fault": "Pressing with the arms too early while still squatting up", "fix": "Cue: 'Violent hip snap first—let your legs make the bar weightless'"},
-						{"fault": "Pulling the bar down into the next squat too early (losing balance forward)", "fix": "Cue: 'Rack first, then squat'"},
-					},
-				},
-				"scaling": map[string]interface{}{
-					"rxPlus":         "115/80 lb Barbell Thrusters unbroken sets target",
-					"scaled":         "65/45 lb Barbell or Dual Dumbbell Thrusters (35/20 lb)",
-					"seniorsMasters": "Dual Dumbbell Squat-to-Target + Push Press (20/12 lb) or Wall Ball Shots (14/10 lb)",
-					"injured": map[string]interface{}{
-						"wristOrShoulder": "Single-Arm Dumbbell Thruster (healthy side) or Goblet Squat + Russian Kettlebell Swing combo",
-						"kneePain":        "Push Press from the rack (75/55 lb) — keeps the upper-body & metabolic stimulus without deep knee flexion",
-						"lowerBack":       "Light Dual DB Front Squat to Box + Strict Press (controlled tempo)",
-					},
-				},
-			},
-			{
-				"name":     "Pull-Up",
-				"category": "Metcon",
-				"cues": map[string]interface{}{
-					"external": []string{
-						"Push the bar away from you at the top to cycle directly into the next kip",
-						"Snap your toes forward and pull your chin over the horizontal plane",
-						"Keep your feet glued together like you're wearing a mermaid fin",
-					},
-					"internal": []string{
-						"Depress your shoulder blades (active hang) before initiating the swing",
-						"Hollow body to arch—initiate from the lats and core, not the knees",
-					},
-					"commonFaults": []map[string]interface{}{
-						{"fault": "Dropping straight down from the top and losing the kip rhythm", "fix": "Cue: 'Push back away from the bar at the top like a pendulum'"},
-						{"fault": "Bending knees wildly in the backswing", "fix": "Cue: 'Squeeze your quads and glutes tight—press your chest through the window'"},
-					},
-				},
-				"scaling": map[string]interface{}{
-					"rxPlus":         "Chest-to-Bar Pull-Ups (21-15-9) or 12-9-6 Bar Muscle-Ups",
-					"scaled":         "Jumping Pull-Ups (controlled descent) or Banded Kipping/Strict Pull-Ups",
-					"seniorsMasters": "Ring Rows (feet under rings, strict 2-sec lower) or Seated Banded Lat Pulldowns",
-					"injured": map[string]interface{}{
-						"wristOrShoulder": "Strict Ring Rows (neutral grip) or Bent-Over Dual Dumbbell Rows",
-						"kneePain":        "Strict Pull-Ups or Banded Strict Pull-Ups (no jumping impact on landing)",
-						"lowerBack":       "Supported Chest-Supported Incline DB Row or Strict Ring Row with glutes braced",
-					},
-				},
-			},
-		},
-		"timeline": map[string]interface{}{
-			"totalMinutes":      60,
-			"feasibilityStatus": "OPTIMAL",
-			"coachWarnings": []string{
-				"Have athletes load their Strength Front Squat barbell on the rig and keep their Metcon plates nearby for a fast 4-minute strip-down transition.",
-				"Cap the 21-15-9 Metcon strictly at 12:00 so everyone gets a full 6-minute cooldown and floor reset.",
-			},
-			"blocks": []map[string]interface{}{
-				{"startMin": 0, "endMin": 4, "label": "Whiteboard Brief, Stimulus & Injury Check", "type": "brief", "notes": "Highlight 3RM Front Squat goal & fast 21-15-9 sprint intent; ask privately about wrists/shoulders."},
-				{"startMin": 4, "endMin": 8, "label": "Warm-Up Phase 1: PVC Circle Drop Reaction Game", "type": "warmup", "notes": "High energy! Call LEFT/RIGHT/SPIN."},
-				{"startMin": 8, "endMin": 16, "label": "Warm-Up Phase 2: Broomstick Thoracic & Squat Therapy", "type": "warmup", "notes": "Check front-rack elbow height and squat depth."},
-				{"startMin": 16, "endMin": 20, "label": "Transition: Rack Assignment & Empty Bar Build-Up", "type": "transition", "notes": "Pair athletes 2 per rack by similar height."},
-				{"startMin": 20, "endMin": 35, "label": "Strength: 15-Min to Find 3RM Front Squat (Every 2:30 x 6 Sets)", "type": "strength", "notes": "Sets at 0:00, 2:30, 5:00, 7:30, 10:00, 12:30. Walk the line cueing 'Elbows Up!'"},
-				{"startMin": 35, "endMin": 42, "label": "Transition: Strip Bars to Metcon Weight & Rig Scaling Check", "type": "transition", "notes": "Run a quick 4-rep Thruster + 4-rep Pull-Up rehearsal round."},
-				{"startMin": 42, "endMin": 54, "label": "Engine / Metcon: 21-15-9 Thrusters & Pull-Ups (12m Cap)", "type": "metcon", "notes": "Watch lumbar posture on set of 15 Thrusters."},
-				{"startMin": 54, "endMin": 60, "label": "Fist Bumps, Chalk Cleanup & Lat/Thoracic Foam Roll", "type": "cooldown", "notes": "60s Puppy Pose on box + 60s Couch Stretch per side."},
-			},
-		},
-		"agentTraces": []map[string]interface{}{
-			{"agent": "WodParserAgent", "provider": "gemini", "model": "gemini/gemini-3.8-flash", "durationMs": 420, "status": "completed"},
-			{"agent": "WarmupPlannerAgent", "provider": "gemini", "model": "gemini/gemini-3.8-flash", "mcpTool": "query_warmup_drills", "durationMs": 610, "status": "completed"},
-			{"agent": "ScalingAndCuesAgent", "provider": "gemini", "model": "gemini/gemini-3.8-flash", "mcpTool": "get_movement_substitutions", "durationMs": 640, "status": "completed"},
-			{"agent": "TimelineLogisticsAgent", "provider": "gemini", "model": "gemini/gemini-3.8-flash", "mcpTool": "validate_class_timeline", "durationMs": 310, "status": "completed"},
-		},
-	}
-}
-
-func (ds *DataStore) ensureDemoCoachInPostgres(ctx context.Context) {
-	if ds.pgPool == nil {
-		return
-	}
-	demo := ds.coaches[DefaultDemoCoachID]
-	_, _ = ds.pgPool.Exec(ctx, `
-		INSERT INTO coaches (id, email, password_hash, display_name, box_name, default_class_duration_min)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (email) DO NOTHING
-	`, demo.ID, demo.Email, demo.PasswordHash, demo.DisplayName, demo.BoxName, demo.DefaultClassDurationMin)
 }
 
 // --- Coach Auth Methods ---
@@ -493,7 +296,7 @@ func (ds *DataStore) GetCoach(ctx context.Context, coachID string) (*models.Coac
 	if c, ok := ds.coaches[coachID]; ok {
 		return c, nil
 	}
-	return ds.coaches[DefaultDemoCoachID], nil
+	return nil, ErrCoachNotFound
 }
 
 func (ds *DataStore) UpdateCoachProfile(ctx context.Context, coachID, displayName, boxName string, defaultDuration int) (*models.Coach, error) {
@@ -501,17 +304,29 @@ func (ds *DataStore) UpdateCoachProfile(ctx context.Context, coachID, displayNam
 		defaultDuration = 60
 	}
 	if ds.pgPool != nil {
-		_, _ = ds.pgPool.Exec(ctx, `
+		tag, err := ds.pgPool.Exec(ctx, `
 			UPDATE coaches SET display_name = $2, box_name = $3, default_class_duration_min = $4, updated_at = NOW()
 			WHERE id = $1
 		`, coachID, displayName, boxName, defaultDuration)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() == 0 {
+			return nil, ErrCoachNotFound
+		}
+		ds.mu.Lock()
+		if c, ok := ds.coaches[coachID]; ok {
+			c.DisplayName, c.BoxName, c.DefaultClassDurationMin = displayName, boxName, defaultDuration
+		}
+		ds.mu.Unlock()
+		return ds.GetCoach(ctx, coachID)
 	}
 
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 	c, ok := ds.coaches[coachID]
 	if !ok {
-		c = ds.coaches[DefaultDemoCoachID]
+		return nil, ErrCoachNotFound
 	}
 	c.DisplayName = displayName
 	c.BoxName = boxName
@@ -643,7 +458,7 @@ func (ds *DataStore) GetAgentPrefs(ctx context.Context, coachID string) ([]*mode
 	defer ds.mu.RUnlock()
 	roleMap, ok := ds.agentPrefs[coachID]
 	if !ok {
-		roleMap = ds.agentPrefs[DefaultDemoCoachID]
+		roleMap = ds.defaultPrefs
 	}
 	var out []*models.AgentModelPref
 	order := []string{"global", "parser", "warmup", "scaling", "timeline"}

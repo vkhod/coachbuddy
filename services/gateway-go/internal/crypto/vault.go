@@ -24,7 +24,7 @@ type Vault struct {
 func NewVault(hexKey string) (*Vault, error) {
 	cleaned := strings.TrimSpace(hexKey)
 	if cleaned == "" {
-		cleaned = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		return nil, errors.New("master encryption key is required (64 hex chars); there is no default")
 	}
 	keyBytes, err := hex.DecodeString(cleaned)
 	if err != nil {

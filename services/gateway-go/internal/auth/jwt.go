@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -25,11 +26,17 @@ type TokenManager struct {
 	secret []byte
 }
 
-func NewTokenManager(secret string) *TokenManager {
-	if strings.TrimSpace(secret) == "" {
-		secret = "coachbuddy-super-secret-jwt-signing-key-2026"
+// MinSecretLength is the minimum JWT signing secret length in bytes (HS256).
+const MinSecretLength = 32
+
+// NewTokenManager returns an error when the secret is missing or too short.
+// There is deliberately no default secret.
+func NewTokenManager(secret string) (*TokenManager, error) {
+	secret = strings.TrimSpace(secret)
+	if len(secret) < MinSecretLength {
+		return nil, fmt.Errorf("JWT secret must be at least %d characters, got %d", MinSecretLength, len(secret))
 	}
-	return &TokenManager{secret: []byte(secret)}
+	return &TokenManager{secret: []byte(secret)}, nil
 }
 
 func HashPassword(password string) (string, error) {
@@ -71,8 +78,9 @@ func (tm *TokenManager) ValidateToken(tokenStr string) (*Claims, error) {
 	return nil, errors.New("invalid token claims")
 }
 
-// Middleware authenticates requests via Bearer token or falls back to the default demo coach when allowDemo is true.
-func (tm *TokenManager) Middleware(defaultCoachID string) func(http.Handler) http.Handler {
+// Middleware authenticates requests via a Bearer token (or the `token` query parameter for SSE).
+// Requests without a valid token are rejected with 401. There is no demo-coach fallback.
+func (tm *TokenManager) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -83,32 +91,30 @@ func (tm *TokenManager) Middleware(defaultCoachID string) func(http.Handler) htt
 				tokenStr = qToken
 			}
 
-			coachID := defaultCoachID
-			if tokenStr != "" {
-				claims, err := tm.ValidateToken(tokenStr)
-				if err != nil || claims.CoachID == "" {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusUnauthorized)
-					_, _ = w.Write([]byte(`{"error":"invalid or expired authorization token"}`))
-					return
-				}
-				coachID = claims.CoachID
-			} else if defaultCoachID == "" {
+			if tokenStr == "" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(`{"error":"authorization token required"}`))
 				return
 			}
+			claims, err := tm.ValidateToken(tokenStr)
+			if err != nil || claims.CoachID == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"invalid or expired authorization token"}`))
+				return
+			}
 
-			ctx := context.WithValue(r.Context(), CoachIDContextKey, coachID)
+			ctx := context.WithValue(r.Context(), CoachIDContextKey, claims.CoachID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
+// GetCoachID returns the authenticated coach ID, or "" when the request did not pass Middleware.
 func GetCoachID(ctx context.Context) string {
-	if v, ok := ctx.Value(CoachIDContextKey).(string); ok && v != "" {
+	if v, ok := ctx.Value(CoachIDContextKey).(string); ok {
 		return v
 	}
-	return "coach-demo-001"
+	return ""
 }

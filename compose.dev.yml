@@ -1,0 +1,18 @@
+# Local development: publishes service ports on 127.0.0.1 only, never on all interfaces.
+#   docker compose -f compose.yml -f compose.dev.yml up --build
+
+services:
+  postgres:
+    ports: ["127.0.0.1:5432:5432"]
+  mongodb:
+    ports: ["127.0.0.1:27017:27017"]
+  redis:
+    ports: ["127.0.0.1:6379:6379"]
+  mcp-rust:
+    ports: ["127.0.0.1:8082:8082"]
+  agents-python:
+    ports: ["127.0.0.1:8081:8081"]
+  gateway-go:
+    ports: ["127.0.0.1:8080:8080"]
+  pwa-nextjs:
+    ports: ["127.0.0.1:3000:3000"]

@@ -27,8 +27,7 @@ pub struct AppState {
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -37,18 +36,20 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(8082);
 
-    let mongo_uri = env::var("MONGO_URI").unwrap_or_else(|_| "mongodb://localhost:27017".to_string());
+    let mongo_uri =
+        env::var("MONGO_URI").unwrap_or_else(|_| "mongodb://localhost:27017".to_string());
     let mongo_db_name = env::var("MONGO_DB").unwrap_or_else(|_| "coachbuddy".to_string());
 
     let db = match mongodb::Client::with_uri_str(&mongo_uri).await {
         Ok(client) => {
-            info!("Connected to MongoDB at {}", mongo_uri);
+            info!("Connected to MongoDB at {}", redact_uri(&mongo_uri));
             Some(client.database(&mongo_db_name))
         }
         Err(e) => {
             warn!(
                 "Could not connect to MongoDB ({}): {}. Running in standalone mode.",
-                mongo_uri, e
+                redact_uri(&mongo_uri),
+                e
             );
             None
         }
@@ -135,4 +136,47 @@ async fn timeline_rest_handler(
 
 async fn qr_rest_handler(Json(input): Json<QrGenerateInput>) -> Json<QrGenerateOutput> {
     Json(generate_qr_svg(input))
+}
+
+/// Hides the password in a connection URI before it is logged:
+/// `mongodb://user:secret@host/` becomes `mongodb://user:***@host/`.
+fn redact_uri(uri: &str) -> String {
+    let Some(scheme_end) = uri.find("://") else {
+        return uri.to_string();
+    };
+    let rest = &uri[scheme_end + 3..];
+    let Some(at) = rest.find('@') else {
+        return uri.to_string();
+    };
+    let userinfo = &rest[..at];
+    match userinfo.find(':') {
+        Some(colon) => format!(
+            "{}://{}:***{}",
+            &uri[..scheme_end],
+            &userinfo[..colon],
+            &rest[at..]
+        ),
+        None => uri.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::redact_uri;
+
+    #[test]
+    fn hides_password() {
+        assert_eq!(
+            redact_uri("mongodb://coachbuddy:s3cret@mongodb:27017/?authSource=admin"),
+            "mongodb://coachbuddy:***@mongodb:27017/?authSource=admin"
+        );
+    }
+
+    #[test]
+    fn leaves_uri_without_password() {
+        assert_eq!(
+            redact_uri("mongodb://localhost:27017"),
+            "mongodb://localhost:27017"
+        );
+    }
 }

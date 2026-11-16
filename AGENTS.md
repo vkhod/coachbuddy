@@ -16,15 +16,19 @@ Each service directory contains its own scoped `AGENTS.md` with stack-specific c
 | **API Gateway & Key Vault** | `services/gateway-go` | `:8080` | Go 1.23+, PostgreSQL (`pgx`), MongoDB, Redis | [services/gateway-go/AGENTS.md](services/gateway-go/AGENTS.md) |
 | **Multi-Agent Orchestrator** | `services/agents-python` | `:8081` | Python 3.12+, FastAPI, Google ADK, LiteLLM | [services/agents-python/AGENTS.md](services/agents-python/AGENTS.md) |
 | **Domain MCP Server** | `services/mcp-rust` | `:8082` | Rust, Axum, Tokio, MCP (`JSON-RPC 2.0`) | [services/mcp-rust/AGENTS.md](services/mcp-rust/AGENTS.md) |
-| **Data & Infra** | `docker-compose.yml`, `infra/` | `:5432`, `:27017`, `:6379` | PostgreSQL 16, MongoDB 7, Redis 7 | — |
+| **Data & Infra** | `compose.yml`, `compose.dev.yml`, `infra/` | `:5432`, `:27017`, `:6379` | PostgreSQL 16, MongoDB 7, Redis 7 | — |
 
 ---
 
 ## 2. Core Cross-Service Invariants (Always Follow)
 
-1. **Resilient Standalone / Zero-Key Execution**:
-   - Every microservice must remain runnable and testable on its own even if Postgres, MongoDB, Redis, or external LLM keys are absent.
-   - Do not break in-memory store fallbacks in `gateway-go`, deterministic MCP/regex fallbacks in `agents-python`, or DB-less cold-start fallbacks in `mcp-rust`.
+1. **Same Behaviour in Every Environment (No Canned Plans)**:
+   - Development and production run the same code paths. A plan is only ever produced by the real agents calling a real LLM with a real key. There is no zero-key, demo or hybrid mode.
+   - Never substitute canned, regex-generated or locally re-computed content when an LLM call, an MCP tool call or another service fails. Mark the affected step or plan section as failed, with the reason, so the coach can retry.
+   - Fakes belong only in automated tests: recorded LLM responses (fixtures) and test doubles inside the test suites, never in application code paths.
+   - The current code still contains such fallbacks (regex parser and canned content in `agents-python`, local MCP re-implementation in `app/mcp_client.py`, local plan builder in `web/pwa-nextjs/src/lib/api.ts`). They are removed during the redesign; do not add new ones.
+   - The databases (Postgres, MongoDB, Redis) are required in every environment; `compose.yml` provides them locally. The existing in-memory store fallback in `gateway-go` and the DB-less cold start in `mcp-rust` are removed during the redesign; do not add new ones. In-memory fakes belong only in tests.
+   - Secrets have no defaults in code or compose files. Services refuse to start when a required secret is missing.
 2. **BYOK API Key Security (`AES-256-GCM`)**:
    - User LLM keys (`gemini`, `openai`, `anthropic`, `groq`) are encrypted at rest in `gateway-go` using AES-256-GCM with unique 12-byte nonces.
    - Never log, persist in plaintext, or return raw API keys to the frontend—always return masked previews (`sk-p••••9x8Z`) and only pass decrypted keys ephemerally over internal requests to `agents-python`.
@@ -37,9 +41,9 @@ Each service directory contains its own scoped `AGENTS.md` with stack-specific c
 
 ## 3. Common Build & Verification Commands
 
-- **Full Stack (Docker Compose)**:
+- **Full Stack (Docker Compose)** (needs a filled-in `.env`, see `.env.example`):
   ```bash
-  docker compose up --build
+  docker compose -f compose.yml -f compose.dev.yml up --build
   ```
 - **Go Gateway (`services/gateway-go`)**:
   ```bash
@@ -47,11 +51,11 @@ Each service directory contains its own scoped `AGENTS.md` with stack-specific c
   ```
 - **Python Orchestrator (`services/agents-python`)**:
   ```bash
-  cd services/agents-python && pytest -v
+  cd services/agents-python && pip install --require-hashes -r requirements.txt -r requirements-dev.txt && pytest -v
   ```
 - **Rust MCP Server (`services/mcp-rust`)**:
   ```bash
-  cd services/mcp-rust && cargo test
+  cd services/mcp-rust && cargo fmt --check && cargo test --locked
   ```
 - **Next.js PWA (`web/pwa-nextjs`)**:
   ```bash

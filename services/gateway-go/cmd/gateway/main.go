@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/coachbuddy/gateway-go/internal/auth"
@@ -26,6 +27,16 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// requireEnv returns the value of a required setting or stops the gateway.
+// Secrets and connection strings have no defaults in any environment.
+func requireEnv(key string) string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		log.Fatalf("Required environment variable %s is not set (see .env.example)", key)
+	}
+	return v
+}
+
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -35,12 +46,13 @@ func envOrDefault(key, fallback string) string {
 
 func main() {
 	port := envOrDefault("GATEWAY_PORT", "8080")
-	jwtSecret := envOrDefault("JWT_SECRET", "coachbuddy-super-secret-jwt-signing-key-2026")
-	masterKeyHex := envOrDefault("MASTER_ENCRYPTION_KEY_HEX", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	pgDSN := envOrDefault("POSTGRES_DSN", "postgres://coachbuddy:coachbuddy_secret@localhost:5432/coachbuddy?sslmode=disable")
-	mongoURI := envOrDefault("MONGO_URI", "mongodb://localhost:27017")
+	jwtSecret := requireEnv("JWT_SECRET")
+	masterKeyHex := requireEnv("MASTER_ENCRYPTION_KEY_HEX")
+	internalToken := requireEnv("INTERNAL_GATEWAY_TOKEN")
+	pgDSN := requireEnv("POSTGRES_DSN")
+	mongoURI := requireEnv("MONGO_URI")
 	mongoDB := envOrDefault("MONGO_DB", "coachbuddy")
-	redisURL := envOrDefault("REDIS_URL", "redis://localhost:6379/0")
+	redisURL := requireEnv("REDIS_URL")
 	agentsURL := envOrDefault("AGENTS_SERVICE_URL", "http://localhost:8081")
 	mcpRustURL := envOrDefault("MCP_RUST_URL", "http://localhost:8082")
 	shareBaseURL := envOrDefault("PUBLIC_SHARE_BASE_URL", "http://localhost:3000/s")
@@ -52,8 +64,11 @@ func main() {
 
 	ctx := context.Background()
 	ds := store.NewDataStore(ctx, vault, pgDSN, mongoURI, mongoDB, redisURL)
-	tm := auth.NewTokenManager(jwtSecret)
-	api := handlers.NewAPIHandler(ds, tm, agentsURL, mcpRustURL, shareBaseURL)
+	tm, err := auth.NewTokenManager(jwtSecret)
+	if err != nil {
+		log.Fatalf("Invalid JWT_SECRET: %v", err)
+	}
+	api := handlers.NewAPIHandler(ds, tm, agentsURL, mcpRustURL, shareBaseURL, internalToken)
 
 	mux := http.NewServeMux()
 
@@ -63,7 +78,7 @@ func main() {
 	mux.HandleFunc("POST /api/v1/auth/login", api.Login)
 	mux.HandleFunc("GET /api/v1/share/{code}", api.ResolveShareLink)
 
-	// Authenticated routes (with seamless demo-coach fallback if no Bearer token provided)
+	// Authenticated routes: a valid token is required
 	authMux := http.NewServeMux()
 	authMux.HandleFunc("GET /api/v1/auth/me", api.GetMe)
 	authMux.HandleFunc("PUT /api/v1/auth/profile", api.UpdateProfile)
@@ -82,7 +97,7 @@ func main() {
 	authMux.HandleFunc("GET /api/v1/sessions/{id}/events", api.StreamSessionEvents)
 	authMux.HandleFunc("POST /api/v1/sessions/{id}/share", api.CreateShareLink)
 
-	mux.Handle("/api/v1/", tm.Middleware(store.DefaultDemoCoachID)(authMux))
+	mux.Handle("/api/v1/", tm.Middleware()(authMux))
 
 	srv := &http.Server{
 		Addr:              ":" + port,

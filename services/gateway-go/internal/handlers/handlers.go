@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,13 +24,15 @@ type APIHandler struct {
 	AgentsServiceURL   string
 	McpRustURL         string
 	PublicShareBaseURL string
+	InternalToken      string // shared secret sent to agents-python as X-Internal-Gateway-Token
 	HttpClient         *http.Client
 }
 
-func NewAPIHandler(ds *store.DataStore, tm *auth.TokenManager, agentsURL, mcpRustURL, shareBaseURL string) *APIHandler {
+func NewAPIHandler(ds *store.DataStore, tm *auth.TokenManager, agentsURL, mcpRustURL, shareBaseURL, internalToken string) *APIHandler {
 	return &APIHandler{
 		Store:              ds,
 		Tokens:             tm,
+		InternalToken:      internalToken,
 		AgentsServiceURL:   strings.TrimRight(agentsURL, "/"),
 		McpRustURL:         strings.TrimRight(mcpRustURL, "/"),
 		PublicShareBaseURL: strings.TrimRight(shareBaseURL, "/"),
@@ -146,8 +149,12 @@ func (h *APIHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	coach, err := h.Store.UpdateCoachProfile(r.Context(), coachID, req.DisplayName, req.BoxName, req.DefaultClassDurationMin)
+	if errors.Is(err, store.ErrCoachNotFound) {
+		writeError(w, http.StatusNotFound, "coach not found")
+		return
+	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to update profile")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"coach": coach})
@@ -270,7 +277,7 @@ func (h *APIHandler) GenerateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Internal-Gateway-Token", "coachbuddy-internal-orchestration-secret")
+	httpReq.Header.Set("X-Internal-Gateway-Token", h.InternalToken)
 
 	resp, err := h.HttpClient.Do(httpReq)
 	if err != nil {
@@ -312,10 +319,26 @@ func (h *APIHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": sessions})
 }
 
-func (h *APIHandler) GetSession(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("id")
+// getOwnedSession loads a session and checks that it belongs to the authenticated coach.
+// A session owned by someone else is reported as not found, so its existence is not revealed.
+func (h *APIHandler) getOwnedSession(r *http.Request, sessionID string) (map[string]interface{}, bool) {
+	coachID := auth.GetCoachID(r.Context())
+	if coachID == "" {
+		return nil, false
+	}
 	doc, err := h.Store.GetSession(r.Context(), sessionID)
-	if err != nil {
+	if err != nil || doc == nil {
+		return nil, false
+	}
+	if owner, _ := doc["coachId"].(string); owner != coachID {
+		return nil, false
+	}
+	return doc, true
+}
+
+func (h *APIHandler) GetSession(w http.ResponseWriter, r *http.Request) {
+	doc, ok := h.getOwnedSession(r, r.PathValue("id"))
+	if !ok {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
@@ -324,7 +347,14 @@ func (h *APIHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
-	_ = h.Store.DeleteSession(r.Context(), sessionID)
+	if _, ok := h.getOwnedSession(r, sessionID); !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if err := h.Store.DeleteSession(r.Context(), sessionID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete session")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -399,7 +429,7 @@ func (h *APIHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	coachID := auth.GetCoachID(r.Context())
 	sessionID := r.PathValue("id")
 
-	if _, err := h.Store.GetSession(r.Context(), sessionID); err != nil {
+	if _, ok := h.getOwnedSession(r, sessionID); !ok {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
@@ -413,7 +443,8 @@ func (h *APIHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 		includeNotes = *req.IncludeCoachNotes
 	}
 
-	shortCode := "cb-" + strings.ToLower(uuid.NewString()[:6])
+	// 12 hex chars (48 bits) so public share codes cannot be guessed by enumeration.
+	shortCode := "cb-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	shareURL := fmt.Sprintf("%s/%s", h.PublicShareBaseURL, shortCode)
 
 	qrSVG := h.fetchQRFromRustMCP(shareURL)

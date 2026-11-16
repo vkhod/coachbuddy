@@ -18,7 +18,6 @@ import {
   Search,
   Copy,
   ExternalLink,
-  UserCheck,
   LogIn,
   X,
   Zap,
@@ -69,14 +68,10 @@ export default function CoachBuddyApp() {
   // Auth Modal State
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [authEmail, setAuthEmail] = useState("coach@crossfitbox.com");
-  const [authPassword, setAuthPassword] = useState("coachbuddy123");
-  const [authDisplayName, setAuthDisplayName] = useState(
-    "Coach Alex Mercer (CF-L3)"
-  );
-  const [authBoxName, setAuthBoxName] = useState(
-    "CrossFit Iron Horizon"
-  );
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [authBoxName, setAuthBoxName] = useState("");
   const [authStatusMsg, setAuthStatusMsg] = useState<string | null>(null);
 
   // Tab 1: WOD Planner Form State
@@ -137,11 +132,9 @@ export default function CoachBuddyApp() {
       if (h.online) {
         const tok = getStoredToken();
         if (!tok || tok.startsWith("local-jwt-")) {
-          const authRes = await loginCoach({
-            email: "coach@crossfitbox.com",
-            password: "coachbuddy123",
-          });
-          setCoach(authRes.coach);
+          // No demo account: ask the coach to sign in or register.
+          setShowAuthModal(true);
+          return;
         }
       }
       const [loadedKeys, loadedPrefs, loadedSessions] = await Promise.all([
@@ -390,16 +383,6 @@ export default function CoachBuddyApp() {
       setShowAuthModal(false);
       setAuthStatusMsg(null);
     }, 700);
-  };
-
-  const handleQuickCoachLogin = async () => {
-    const res = await loginCoach({
-      email: "coach@crossfitbox.com",
-      password: "coachbuddy123",
-    });
-    setCoach(res.coach);
-    setGatewayOnline(res.mode === "gateway");
-    setShowAuthModal(false);
   };
 
   const handleAddKey = async (e: React.FormEvent) => {
@@ -1662,17 +1645,6 @@ export default function CoachBuddyApp() {
                   : "Create Coach Account"}
               </button>
             </form>
-
-            <div className="pt-2 border-t border-slate-800">
-              <button
-                type="button"
-                onClick={handleQuickCoachLogin}
-                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-300 border border-slate-700 flex items-center justify-center gap-2 transition"
-              >
-                <UserCheck className="w-4 h-4" />
-                <span>Instant Quick Coach Login (Demo CF-L3 Profile)</span>
-              </button>
-            </div>
           </div>
         </div>
       )}

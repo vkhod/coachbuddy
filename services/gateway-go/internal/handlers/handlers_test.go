@@ -21,9 +21,57 @@ func newTestAPIHandler(t *testing.T) (*APIHandler, *store.DataStore) {
 	}
 	ctx := context.Background()
 	ds := store.NewDataStore(ctx, vault, "", "", "", "")
-	tm := auth.NewTokenManager("test-jwt-secret-12345")
-	api := NewAPIHandler(ds, tm, "http://localhost:8081", "http://localhost:8082", "http://localhost:3000/s")
+	tm, err := auth.NewTokenManager("test-jwt-secret-at-least-32-characters")
+	if err != nil {
+		t.Fatalf("failed to create token manager: %v", err)
+	}
+	api := NewAPIHandler(ds, tm, "http://localhost:8081", "http://localhost:8082", "http://localhost:3000/s", "test-internal-token")
 	return api, ds
+}
+
+// requestAs builds a request that has passed auth.Middleware for the given coach.
+func requestAs(method, target, coachID, sessionID string) *http.Request {
+	req := httptest.NewRequest(method, target, nil)
+	req.SetPathValue("id", sessionID)
+	return req.WithContext(context.WithValue(req.Context(), auth.CoachIDContextKey, coachID))
+}
+
+func TestSessionEndpoints_RejectOtherCoaches(t *testing.T) {
+	api, ds := newTestAPIHandler(t)
+	ctx := context.Background()
+	sessionID := "session-owned-by-alpha"
+	if err := ds.SaveSession(ctx, sessionID, map[string]interface{}{
+		"_id": sessionID, "sessionId": sessionID, "coachId": "coach-alpha", "title": "Alpha WOD",
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		method  string
+		handler http.HandlerFunc
+	}{
+		{"get", http.MethodGet, api.GetSession},
+		{"share", http.MethodPost, api.CreateShareLink},
+		{"delete", http.MethodDelete, api.DeleteSession},
+	}
+	for _, c := range cases {
+		rr := httptest.NewRecorder()
+		c.handler(rr, requestAs(c.method, "/api/v1/sessions/"+sessionID, "coach-beta", sessionID))
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s by another coach: expected 404, got %d", c.name, rr.Code)
+		}
+	}
+
+	if _, err := ds.GetSession(ctx, sessionID); err != nil {
+		t.Fatalf("session must still exist after another coach tried to delete it: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	api.GetSession(rr, requestAs(http.MethodGet, "/api/v1/sessions/"+sessionID, "coach-alpha", sessionID))
+	if rr.Code != http.StatusOK {
+		t.Errorf("get by owner: expected 200, got %d", rr.Code)
+	}
 }
 
 func TestResolveShareLink_SanitizesAthleteMode(t *testing.T) {

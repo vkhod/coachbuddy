@@ -1,0 +1,4 @@
+# Test-only dependencies, never installed in the image. Regenerate with:
+#   uv pip compile requirements-dev.in --python-version 3.12 --generate-hashes -c requirements.txt -o requirements-dev.txt
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
