@@ -13,7 +13,7 @@ Each service directory contains its own scoped `AGENTS.md` with stack-specific c
 | Service / Layer | Path | Host Port | Tech Stack | Scoped Rules |
 | :--- | :--- | :--- | :--- | :--- |
 | **Coach PWA & Share UI** | `web/pwa-nextjs` | `:3000` | TypeScript, Next.js 14 (App Router), Tailwind CSS | [web/pwa-nextjs/AGENTS.md](web/pwa-nextjs/AGENTS.md) |
-| **API Gateway & Key Vault** | `services/gateway-go` | `:8080` | Go 1.23+, PostgreSQL (`pgx`), MongoDB, Redis | [services/gateway-go/AGENTS.md](services/gateway-go/AGENTS.md) |
+| **API Gateway & Key Vault** | `services/gateway-go` | `:8080` | Go 1.27, PostgreSQL (`pgx`), MongoDB, Redis | [services/gateway-go/AGENTS.md](services/gateway-go/AGENTS.md) |
 | **Multi-Agent Orchestrator** | `services/agents-python` | `:8081` | Python 3.12+, FastAPI, Google ADK, LiteLLM | [services/agents-python/AGENTS.md](services/agents-python/AGENTS.md) |
 | **Domain MCP Server** | `services/mcp-rust` | `:8082` | Rust, Axum, Tokio, MCP (`JSON-RPC 2.0`) | [services/mcp-rust/AGENTS.md](services/mcp-rust/AGENTS.md) |
 | **Data & Infra** | `compose.yml`, `compose.dev.yml`, `infra/` | `:5432`, `:27017`, `:6379` | PostgreSQL 16, MongoDB 7, Redis 7 | — |

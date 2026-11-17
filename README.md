@@ -11,7 +11,7 @@ Architecture & System Design documentation: [docs/ARCHITECTURE.md](docs/ARCHITEC
 | Layer | Service Directory | Technology | Core Responsibilities |
 | :--- | :--- | :--- | :--- |
 | **Frontend PWA** | `web/pwa-nextjs` | **TypeScript, Next.js (App Router), Tailwind CSS** | WOD Planner, Live Agent Stepper, 4-Tier Scaling Matrix, **Coach Floor Mode** (live class timer + `WakeLock`), BYOK Vault UI, Public QR Share View (`/s/[code]`). |
-| **API Gateway & Key Vault** | `services/gateway-go` | **Go 1.23+, PostgreSQL (`pgx`), MongoDB, Redis** | JWT Auth, **AES-256-GCM BYOK API Key Encryption**, Per-Agent Model Routing, Redis SSE Event Streaming, Short-Link & QR Share management. |
+| **API Gateway & Key Vault** | `services/gateway-go` | **Go 1.27, PostgreSQL (`pgx`), MongoDB, Redis** | JWT Auth, **AES-256-GCM BYOK API Key Encryption**, Per-Agent Model Routing, Redis SSE Event Streaming, Short-Link & QR Share management. |
 | **Multi-Agent Orchestrator** | `services/agents-python` | **Python 3.12+, FastAPI, Google ADK, LiteLLM** | Hierarchical `SequentialAgent` + `ParallelAgent` pipeline (`WodParserAgent`, `WarmupPlannerAgent`, `ScalingAndCuesAgent`, `TimelineLogisticsAgent`) with dynamic BYOK routing and MCP tool execution. |
 | **Domain MCP Server** | `services/mcp-rust` | **Rust, Axum, MCP (JSON-RPC 2.0)** | High-speed deterministic MCP tools: `query_warmup_drills`, `get_movement_substitutions`, `validate_class_timeline`, and `generate_qr_svg`. |
 | **Data Layer** | `docker-compose.yml` | **PostgreSQL 16, MongoDB 7, Redis 7** | Polyglot persistence: relational user/vault store (Postgres), hierarchical WOD session history (MongoDB), and real-time event pub/sub (Redis). |

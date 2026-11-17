@@ -1,6 +1,6 @@
 # Go API Gateway & BYOK Security Vault — Agent Rules (`services/gateway-go`)
 
-This directory contains `gateway-go` (`:8080`), the Go 1.23+ API Gateway, JWT Auth provider, AES-256-GCM BYOK Key Vault, Redis SSE streamer, and public share coordinator.
+This directory contains `gateway-go` (`:8080`), the Go 1.27 API Gateway, JWT Auth provider, AES-256-GCM BYOK Key Vault, Redis SSE streamer, and public share coordinator.
 
 ---
 
