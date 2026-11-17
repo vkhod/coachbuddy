@@ -1,0 +1,75 @@
+# Weekly version updates, one grouped pull request per ecosystem.
+# Security updates are separate and arrive when an advisory is published.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /services/gateway-go
+    schedule: { interval: weekly, day: monday }
+    groups:
+      go: { patterns: ["*"] }
+
+  # requirements.txt is a hashed lock compiled from requirements.in (see the file header).
+  - package-ecosystem: pip
+    directory: /services/agents-python
+    schedule: { interval: weekly, day: monday }
+    groups:
+      python: { patterns: ["*"] }
+
+  - package-ecosystem: cargo
+    directory: /services/mcp-rust
+    schedule: { interval: weekly, day: monday }
+    groups:
+      rust: { patterns: ["*"] }
+
+  - package-ecosystem: npm
+    directory: /web/pwa-nextjs
+    schedule: { interval: weekly, day: monday }
+    groups:
+      npm: { patterns: ["*"] }
+    ignore:
+      # The Next.js and React major upgrade is planned work at the start of Phase 3.
+      - dependency-name: next
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react-dom
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker
+    directories:
+      - /services/gateway-go
+      - /services/agents-python
+      - /services/mcp-rust
+      - /web/pwa-nextjs
+    schedule: { interval: weekly, day: monday }
+    groups:
+      docker: { patterns: ["*"] }
+    ignore:
+      # Language runtimes move by major version on purpose, together with the code.
+      - dependency-name: golang
+        update-types: ["version-update:semver-major"]
+      - dependency-name: python
+        update-types: ["version-update:semver-major"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      compose: { patterns: ["*"] }
+    ignore:
+      # A database major version needs a data migration, so it is never automatic.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: mongo
+        update-types: ["version-update:semver-major"]
+      - dependency-name: redis
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      actions: { patterns: ["*"] }
