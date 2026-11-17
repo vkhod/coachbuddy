@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cocoach.vkhod.dev/schema/plan-event.schema.json",
+  "title": "PlanEvent",
+  "description": "One SSE event on GET /api/v1/plans/{id}/events. section 'plan' with state done or failed ends the stream.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "planId",
+    "revision",
+    "section",
+    "state"
+  ],
+  "properties": {
+    "planId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "section": {
+      "$ref": "#/$defs/EventSection"
+    },
+    "state": {
+      "$ref": "#/$defs/EventState"
+    },
+    "error": {
+      "type": "string",
+      "maxLength": 300
+    }
+  },
+  "$defs": {
+    "EventSection": {
+      "type": "string",
+      "enum": [
+        "wod",
+        "warmup",
+        "parts",
+        "injuries",
+        "timeline",
+        "plan"
+      ]
+    },
+    "EventState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "done",
+        "failed",
+        "skipped"
+      ]
+    }
+  }
+}

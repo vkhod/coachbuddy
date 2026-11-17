@@ -1,27 +1,9 @@
 use qrcode::types::Color;
 use qrcode::{EcLevel, QrCode};
-use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QrGenerateInput {
-    pub data: String,
-    #[serde(default = "default_qr_size")]
-    pub size: u32,
-}
-
-fn default_qr_size() -> u32 {
-    256
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QrGenerateOutput {
-    pub svg: String,
-    pub data: String,
-    pub size: u32,
-}
+// Input and output types are generated from schema/tools.schema.json (src/contract.rs).
+pub use crate::contract::{QrGenerateInput, QrGenerateOutput};
 
 pub fn generate_qr_svg(input: QrGenerateInput) -> QrGenerateOutput {
     let payload = if input.data.trim().is_empty() {

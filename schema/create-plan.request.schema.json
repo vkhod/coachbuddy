@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cocoach.vkhod.dev/schema/create-plan.request.schema.json",
+  "title": "CreatePlanRequest",
+  "description": "POST /api/v1/plans. The image is resized in the browser (about 1600 px, JPEG) before upload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "imageBase64",
+    "classMinutes"
+  ],
+  "properties": {
+    "imageBase64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000000
+    },
+    "comment": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "classMinutes": {
+      "type": "integer",
+      "minimum": 20,
+      "maximum": 180
+    }
+  }
+}

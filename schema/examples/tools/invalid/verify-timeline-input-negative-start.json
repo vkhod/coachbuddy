@@ -1,0 +1,13 @@
+{
+  "$def": "VerifyTimelineInput",
+  "value": {
+    "totalMinutes": 60,
+    "blocks": [
+      {
+        "startMin": -5,
+        "endMin": 15,
+        "label": "Warm-up"
+      }
+    ]
+  }
+}

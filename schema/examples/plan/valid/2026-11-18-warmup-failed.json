@@ -1,0 +1,204 @@
+{
+  "planId": "pl_7f3b",
+  "coachId": "c_01",
+  "revision": 1,
+  "input": {
+    "imageRef": "img_91c",
+    "comment": "senior athlete today. ankle injury returning after 2 weeks, one shoulder tear",
+    "classMinutes": 60
+  },
+  "today": [
+    {
+      "label": "Senior",
+      "count": 1,
+      "tier": "senior",
+      "fromComment": "senior athlete today"
+    }
+  ],
+  "wod": {
+    "title": "Clean + front squat, Pendlay row, 20 min EMOM",
+    "date": "2026-11-18",
+    "parts": [
+      {
+        "id": "A",
+        "name": "Build a",
+        "kind": "strength",
+        "prescription": "E1.5 x 6: 2 power clean + 2 front squat @ 75%",
+        "minutes": 9
+      },
+      {
+        "id": "B",
+        "name": "Build b",
+        "kind": "strength",
+        "prescription": "Pendlay row 8-8-6-6, heavier each set; b/t sets 30s heavy plank hold",
+        "minutes": 10
+      },
+      {
+        "id": "C",
+        "name": "Engine",
+        "kind": "conditioning",
+        "prescription": "20 min EMOM (5 rounds): 8 burpees, 16 Russian KB swings, 24 sit-ups, 64 DU",
+        "minutes": 20
+      }
+    ]
+  },
+  "parts": [
+    {
+      "partId": "A",
+      "layout": "lines",
+      "tiers": {
+        "rx": {
+          "line": "E1.5 x 6: 2 power clean + 2 front squat @ 75%"
+        },
+        "scaled": {
+          "line": "Same, @ 60-65%, or hang power clean"
+        },
+        "senior": {
+          "line": "DB hang clean + goblet squat, 2+2, smooth tempo"
+        }
+      },
+      "cues": [
+        "Bar close, hips through",
+        "Elbows high in the catch",
+        "Brace before the squat"
+      ]
+    },
+    {
+      "partId": "B",
+      "layout": "lines",
+      "tiers": {
+        "rx": {
+          "line": "Pendlay row 8-8-6-6, heavier each set; 30s heavy plank b/t"
+        },
+        "scaled": {
+          "line": "Same reps, moderate load; 30s plank b/t"
+        },
+        "senior": {
+          "line": "Chest-supported DB row 8-8-6-6; 20s plank from knees"
+        }
+      },
+      "cues": [
+        "Bar returns to the floor each rep",
+        "Flat back, chest over the bar"
+      ]
+    },
+    {
+      "partId": "C",
+      "layout": "grid",
+      "columns": [
+        "Burpees",
+        "Russian KBS",
+        "Sit-ups",
+        "DU"
+      ],
+      "tiers": {
+        "rx": {
+          "line": "8 burpees, 16 KBS 24/16, 24 sit-ups, 64 DU",
+          "cells": [
+            "8",
+            "16 @ 24/16",
+            "24",
+            "64"
+          ]
+        },
+        "rxPlus": {
+          "line": "10 burpees, 16 KBS 32/24, 24 sit-ups, 80 DU",
+          "cells": [
+            "10",
+            "16 @ 32/24",
+            "24",
+            "80"
+          ]
+        },
+        "scaled": {
+          "line": "6 burpees, 14 KBS 16/12, 20 sit-ups, 100 singles",
+          "cells": [
+            "6",
+            "14 @ 16/12",
+            "20",
+            "100 singles"
+          ]
+        },
+        "senior": {
+          "line": "6 step-back burpees, 12 KBS 12/8, 15 sit-ups, 60s bike",
+          "cells": [
+            "6 step-back",
+            "12 @ 12/8",
+            "15",
+            "60s bike"
+          ]
+        }
+      },
+      "cues": [
+        "Finish each minute with 10-15s rest",
+        "Hips snap, arms float on the swing"
+      ]
+    }
+  ],
+  "timeline": {
+    "totalMinutes": 60,
+    "provisional": true,
+    "status": "OPTIMAL",
+    "blocks": [
+      {
+        "startMin": 0,
+        "endMin": 3,
+        "label": "Brief",
+        "section": "brief"
+      },
+      {
+        "startMin": 3,
+        "endMin": 15,
+        "label": "Warm-up",
+        "section": "warmup"
+      },
+      {
+        "startMin": 15,
+        "endMin": 24,
+        "label": "A. Clean + front squat",
+        "section": "A"
+      },
+      {
+        "startMin": 24,
+        "endMin": 34,
+        "label": "B. Pendlay row",
+        "section": "B"
+      },
+      {
+        "startMin": 34,
+        "endMin": 37,
+        "label": "Set up KBs and ropes",
+        "section": "transition"
+      },
+      {
+        "startMin": 37,
+        "endMin": 57,
+        "label": "Engine EMOM",
+        "section": "C"
+      },
+      {
+        "startMin": 57,
+        "endMin": 60,
+        "label": "Cool-down"
+      }
+    ]
+  },
+  "sectionStatus": {
+    "wod": {
+      "state": "done"
+    },
+    "warmup": {
+      "state": "failed",
+      "error": "Model answer did not match the schema after one repair retry: warmup.targets has 5 items, at most 4"
+    },
+    "parts": {
+      "state": "done"
+    },
+    "injuries": {
+      "state": "running"
+    },
+    "timeline": {
+      "state": "done"
+    }
+  }
+}

@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cocoach.vkhod.dev/schema/tools.schema.json",
+  "title": "McpTools",
+  "description": "Inputs and outputs of the mcp-rust tools. A model fills tool inputs, so optional input fields also accept null.",
+  "$defs": {
+    "VerifyTimelineInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blocks"
+      ],
+      "properties": {
+        "totalMinutes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 60
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimelineToolBlock"
+          }
+        }
+      }
+    },
+    "TimelineToolBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startMin",
+        "endMin",
+        "label"
+      ],
+      "properties": {
+        "startMin": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "endMin": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string"
+        },
+        "type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Block kind, for example brief, warmup, strength, transition."
+        },
+        "section": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "VerifyTimelineOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "isValid",
+        "totalMinutes",
+        "scheduledMinutes",
+        "discrepancyMinutes",
+        "feasibilityStatus",
+        "coachWarnings",
+        "issues",
+        "blocks"
+      ],
+      "properties": {
+        "isValid": {
+          "type": "boolean"
+        },
+        "totalMinutes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "scheduledMinutes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "discrepancyMinutes": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "feasibilityStatus": {
+          "$ref": "#/$defs/TimelineStatus"
+        },
+        "coachWarnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimelineIssue"
+          }
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimelineToolBlock"
+          }
+        }
+      }
+    },
+    "TimelineStatus": {
+      "type": "string",
+      "enum": [
+        "OPTIMAL",
+        "TIGHT",
+        "INVALID"
+      ]
+    },
+    "TimelineIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blockIndex",
+        "blockLabel",
+        "issueType",
+        "description"
+      ],
+      "properties": {
+        "blockIndex": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "blockLabel": {
+          "type": "string"
+        },
+        "issueType": {
+          "$ref": "#/$defs/TimelineIssueType"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "TimelineIssueType": {
+      "type": "string",
+      "enum": [
+        "GAP",
+        "OVERLAP",
+        "INVALID_DURATION",
+        "SUM_MISMATCH",
+        "EMPTY_TIMELINE"
+      ]
+    },
+    "HistoryQueryInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coachId"
+      ],
+      "properties": {
+        "coachId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "format": "int64",
+          "default": 5
+        }
+      }
+    },
+    "PastWarmupSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "createdAt",
+        "gameTitle",
+        "style",
+        "drillNames"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "gameTitle": {
+          "type": "string"
+        },
+        "style": {
+          "type": "string"
+        },
+        "drillNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "HistoryQueryOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coachId",
+        "recentWarmups",
+        "count",
+        "summary"
+      ],
+      "properties": {
+        "coachId": {
+          "type": "string"
+        },
+        "recentWarmups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PastWarmupSummary"
+          }
+        },
+        "count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "QrGenerateInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 256
+        }
+      }
+    },
+    "QrGenerateOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "svg",
+        "data",
+        "size"
+      ],
+      "properties": {
+        "svg": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

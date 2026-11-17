@@ -2,38 +2,9 @@ use futures_util::stream::StreamExt;
 use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
 use mongodb::Database;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HistoryQueryInput {
-    pub coach_id: String,
-    #[serde(default = "default_history_limit")]
-    pub limit: i64,
-}
-
-fn default_history_limit() -> i64 {
-    5
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct PastWarmupSummary {
-    pub session_id: String,
-    pub created_at: String,
-    pub game_title: String,
-    pub style: String,
-    pub drill_names: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct HistoryQueryOutput {
-    pub coach_id: String,
-    pub recent_warmups: Vec<PastWarmupSummary>,
-    pub count: usize,
-    pub summary: String,
-}
+// Input and output types are generated from schema/tools.schema.json (src/contract.rs).
+pub use crate::contract::{HistoryQueryInput, HistoryQueryOutput, PastWarmupSummary};
 
 /// Helper that builds the MongoDB filter document and find options.
 /// Query filter targets: { "coachId": coach_id, "status": "completed" }
@@ -164,7 +135,7 @@ pub async fn query_recent_coaching_history(
     let summary = if count == 0 {
         format!(
             "No previous completed sessions found for coach {}. Fresh programming slate.",
-            input.coach_id
+            input.coach_id.as_str()
         )
     } else {
         let game_list: Vec<&str> = recent_warmups
@@ -179,9 +150,9 @@ pub async fn query_recent_coaching_history(
     };
 
     Ok(HistoryQueryOutput {
-        coach_id: input.coach_id,
+        coach_id: String::from(input.coach_id),
         recent_warmups,
-        count,
+        count: count as u32,
         summary,
     })
 }
