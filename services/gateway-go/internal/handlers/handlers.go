@@ -362,6 +362,12 @@ func (h *APIHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) StreamSessionEvents(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
+	// Same rule as read, delete and share: another coach's session, or an unknown
+	// one, is reported as not found before the stream opens.
+	if _, ok := h.getOwnedSession(r, sessionID); !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")

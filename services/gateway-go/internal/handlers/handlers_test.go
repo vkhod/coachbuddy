@@ -224,3 +224,40 @@ func TestResolveShareLink_PreservesCoachModeNotes(t *testing.T) {
 		t.Errorf("expected coachWarnings to be retained in Coach mode")
 	}
 }
+
+func TestStreamSessionEvents_RejectsOtherCoachesAndUnknownSessions(t *testing.T) {
+	api, ds := newTestAPIHandler(t)
+	ctx := context.Background()
+	sessionID := "session-events-alpha"
+	if err := ds.SaveSession(ctx, sessionID, map[string]interface{}{
+		"_id": sessionID, "sessionId": sessionID, "coachId": "coach-alpha",
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	cases := []struct {
+		name, coachID, sessionID string
+	}{
+		{"another coach", "coach-beta", sessionID},
+		{"unknown session", "coach-alpha", "session-does-not-exist"},
+	}
+	for _, c := range cases {
+		rr := httptest.NewRecorder()
+		api.StreamSessionEvents(rr, requestAs(http.MethodGet, "/api/v1/sessions/"+c.sessionID+"/events", c.coachID, c.sessionID))
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: expected 404, got %d", c.name, rr.Code)
+		}
+		if ct := rr.Header().Get("Content-Type"); ct == "text/event-stream" {
+			t.Errorf("%s: the event stream must not open, got Content-Type %q", c.name, ct)
+		}
+	}
+
+	rr := httptest.NewRecorder()
+	api.StreamSessionEvents(rr, requestAs(http.MethodGet, "/api/v1/sessions/"+sessionID+"/events", "coach-alpha", sessionID))
+	if rr.Code != http.StatusOK {
+		t.Errorf("owner: expected 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("owner: expected text/event-stream, got %q", ct)
+	}
+}
