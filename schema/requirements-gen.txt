@@ -1,0 +1,3 @@
+# Python tools for scripts/gen-schema. Versions are pinned because they change the generated output.
+datamodel-code-generator==0.97.0
+ruff==0.16.9

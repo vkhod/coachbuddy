@@ -9,6 +9,7 @@ This directory contains `pwa-nextjs` (`:3000`), the TypeScript + Next.js 14 (App
 - `src/app/page.tsx`: Main multi-tab Coaching Console (WOD Planner, Active Session & Coach Floor Mode, Session History Library, BYOK Encrypted Key Vault).
 - `src/app/s/[code]/page.tsx`: Public QR Share view supporting both `Co-Coach View` (full timeline + cues + scaling) and `Athlete View` (workout + scaling tiers).
 - `src/app/layout.tsx` & `src/app/globals.css`: App shell, metadata, PWA manifest links, and Tactical Athletic Box dark theme styling.
+- `src/lib/contract/`: TypeScript types generated from `schema/` by `scripts/gen-schema` (do not edit).
 - `src/lib/`: API client utilities, TypeScript interfaces matching the Go Gateway & Python Orchestrator contracts, and demo fallback helpers.
 - `public/manifest.json` & `public/icon.svg`: Installable PWA manifest and vector assets.
 

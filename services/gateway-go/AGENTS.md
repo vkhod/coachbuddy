@@ -10,6 +10,7 @@ This directory contains `gateway-go` (`:8080`), the Go 1.27 API Gateway, JWT Aut
 - `internal/auth/`: JWT (`HS256`) token generation, verification, and auth middleware.
 - `internal/crypto/`: `Vault` implementation (`vault.go`, `vault_test.go`) performing AES-256-GCM envelope encryption/decryption and key masking.
 - `internal/handlers/`: HTTP handlers for Auth, BYOK Vault/Routing settings, WOD Session generation, SSE streaming, History, and Public QR Share links (`/api/v1/share/{code}`).
+- `internal/contract/`: generated from `schema/` by `scripts/gen-schema` (do not edit); `contract_test.go` checks the shared examples.
 - `internal/models/`: Request/response DTOs and domain structures (`camelCase` JSON tags).
 - `internal/store/`: Dual-mode storage layer supporting PostgreSQL (`pgx`), MongoDB, and Redis with automatic in-memory fallback when databases are offline.
 

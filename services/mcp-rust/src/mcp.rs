@@ -135,7 +135,7 @@ pub async fn execute_named_tool(
                 serde_json::to_value(out).map_err(|e| e.to_string())
             } else {
                 let fallback = HistoryQueryOutput {
-                    coach_id: parsed.coach_id,
+                    coach_id: String::from(parsed.coach_id),
                     recent_warmups: vec![],
                     count: 0,
                     summary: "Database not configured or currently unreachable; proceeding with cold-start warmup recommendations.".to_string(),

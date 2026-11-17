@@ -9,6 +9,7 @@ This directory contains `agents-python` (`:8081`), the Python 3.12+ FastAPI serv
 - `app/main.py`: FastAPI application (`/health`, `/api/v1/orchestrate`, `/orchestrate`).
 - `app/adk_pipeline.py`: Multi-agent orchestration pipeline implementing the 3-stage `SequentialAgent` + `ParallelAgent` topology.
 - `app/mcp_client.py`: Async JSON-RPC 2.0 client (`RustMcpClient`) calling `mcp-rust` (`http://localhost:8082/mcp`). Tool errors are raised to the caller; MCP tools are never re-implemented locally.
+- `app/contract/`: Pydantic models generated from `schema/` by `scripts/gen-schema` (do not edit), plus `rules.py`, the hand-written cross-field rules. These models are the agents' output schemas.
 - `app/models.py`: Strict Pydantic v2 models matching the cross-service `camelCase` JSON contract.
 - `tests/test_orchestrator.py`: Pytest suite verifying end-to-end orchestration, MCP tool integration, timeline math, and 4-tier scaling outputs.
 

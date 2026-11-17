@@ -1,3 +1,7 @@
+#[allow(dead_code)]
+mod contract;
+#[cfg(test)]
+mod contract_tests;
 mod domain;
 mod mcp;
 
@@ -112,7 +116,7 @@ async fn history_rest_handler(
         match query_recent_coaching_history(db, input.clone()).await {
             Ok(out) => Json(out),
             Err(err) => Json(HistoryQueryOutput {
-                coach_id: input.coach_id,
+                coach_id: String::from(input.coach_id),
                 recent_warmups: vec![],
                 count: 0,
                 summary: format!("Error querying history: {}", err),
@@ -120,7 +124,7 @@ async fn history_rest_handler(
         }
     } else {
         Json(HistoryQueryOutput {
-            coach_id: input.coach_id,
+            coach_id: String::from(input.coach_id),
             recent_warmups: vec![],
             count: 0,
             summary: "MongoDB not connected; no past session history available.".to_string(),

@@ -1,55 +1,9 @@
-use serde::{Deserialize, Serialize};
+//! Timeline arithmetic for the class plan: the only implementation of it (D3).
+//! Input and output types are generated from schema/tools.schema.json (src/contract.rs).
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TimelineBlockInput {
-    pub start_min: u32,
-    pub end_min: u32,
-    pub label: String,
-    #[serde(default = "default_block_type", rename = "type")]
-    pub block_type: String,
-    #[serde(default)]
-    pub notes: String,
-}
-
-fn default_block_type() -> String {
-    "metcon".to_string()
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VerifyTimelineInput {
-    #[serde(default = "default_total_minutes")]
-    pub total_minutes: u32,
-    #[serde(default)]
-    pub blocks: Vec<TimelineBlockInput>,
-}
-
-fn default_total_minutes() -> u32 {
-    60
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TimelineIssue {
-    pub block_index: usize,
-    pub block_label: String,
-    pub issue_type: String, // "GAP", "OVERLAP", "INVALID_DURATION", "SUM_MISMATCH", "EMPTY_TIMELINE"
-    pub description: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VerifyTimelineOutput {
-    pub is_valid: bool,
-    pub total_minutes: u32,
-    pub scheduled_minutes: u32,
-    pub discrepancy_minutes: i32,
-    pub feasibility_status: String, // "OPTIMAL", "TIGHT", "INVALID"
-    pub coach_warnings: Vec<String>,
-    pub issues: Vec<TimelineIssue>,
-    pub blocks: Vec<TimelineBlockInput>,
-}
+pub use crate::contract::{
+    TimelineIssue, TimelineIssueType, TimelineStatus, VerifyTimelineInput, VerifyTimelineOutput,
+};
 
 /// Pure deterministic timeline math verifier.
 /// Verifies that the LLM-generated minute-by-minute schedule is mathematically sound:
@@ -72,7 +26,7 @@ pub fn verify_timeline_math(input: VerifyTimelineInput) -> VerifyTimelineOutput 
         issues.push(TimelineIssue {
             block_index: 0,
             block_label: "None".to_string(),
-            issue_type: "EMPTY_TIMELINE".to_string(),
+            issue_type: TimelineIssueType::EmptyTimeline,
             description: "No timeline blocks were provided for verification.".to_string(),
         });
         return VerifyTimelineOutput {
@@ -80,7 +34,7 @@ pub fn verify_timeline_math(input: VerifyTimelineInput) -> VerifyTimelineOutput 
             total_minutes,
             scheduled_minutes: 0,
             discrepancy_minutes: total_minutes as i32,
-            feasibility_status: "INVALID".to_string(),
+            feasibility_status: TimelineStatus::Invalid,
             coach_warnings: vec!["Cannot verify an empty timeline schedule.".to_string()],
             issues,
             blocks: input.blocks,
@@ -117,9 +71,9 @@ pub fn verify_timeline_math(input: VerifyTimelineInput) -> VerifyTimelineOutput 
         // Invariant A: Duration must be strictly positive
         if block.end_min <= block.start_min {
             issues.push(TimelineIssue {
-                block_index: idx,
+                block_index: idx as u32,
                 block_label: block.label.clone(),
-                issue_type: "INVALID_DURATION".to_string(),
+                issue_type: TimelineIssueType::InvalidDuration,
                 description: format!(
                     "Block '{}' has invalid duration (startMin: {}, endMin: {})",
                     block.label, block.start_min, block.end_min
@@ -132,9 +86,9 @@ pub fn verify_timeline_math(input: VerifyTimelineInput) -> VerifyTimelineOutput 
             has_gaps_or_overlaps = true;
             let gap = block.start_min - expected_cursor;
             issues.push(TimelineIssue {
-                block_index: idx,
+                block_index: idx as u32,
                 block_label: block.label.clone(),
-                issue_type: "GAP".to_string(),
+                issue_type: TimelineIssueType::Gap,
                 description: format!(
                     "Unscheduled gap of {} minute(s) before '{}' (expected start: {}, actual: {})",
                     gap, block.label, expected_cursor, block.start_min
@@ -144,9 +98,9 @@ pub fn verify_timeline_math(input: VerifyTimelineInput) -> VerifyTimelineOutput 
             has_gaps_or_overlaps = true;
             let overlap = expected_cursor - block.start_min;
             issues.push(TimelineIssue {
-                block_index: idx,
+                block_index: idx as u32,
                 block_label: block.label.clone(),
-                issue_type: "OVERLAP".to_string(),
+                issue_type: TimelineIssueType::Overlap,
                 description: format!(
                     "Timeline collision: overlap of {} minute(s) before '{}' (expected start: {}, actual: {})",
                     overlap, block.label, expected_cursor, block.start_min
@@ -162,9 +116,9 @@ pub fn verify_timeline_math(input: VerifyTimelineInput) -> VerifyTimelineOutput 
 
     if discrepancy_minutes != 0 {
         issues.push(TimelineIssue {
-            block_index: input.blocks.len().saturating_sub(1),
+            block_index: input.blocks.len().saturating_sub(1) as u32,
             block_label: "End of Class".to_string(),
-            issue_type: "SUM_MISMATCH".to_string(),
+            issue_type: TimelineIssueType::SumMismatch,
             description: format!(
                 "Total scheduled minutes ({}) does not match class cap ({}). Discrepancy: {} minute(s)",
                 scheduled_minutes, total_minutes, discrepancy_minutes.abs()
@@ -178,20 +132,20 @@ pub fn verify_timeline_math(input: VerifyTimelineInput) -> VerifyTimelineOutput 
             "Timeline verified: 100% contiguous 0..totalMinutes coverage with zero gaps or collisions."
                 .to_string(),
         );
-        "OPTIMAL".to_string()
+        TimelineStatus::Optimal
     } else if !has_gaps_or_overlaps && discrepancy_minutes.abs() <= 5 {
         coach_warnings.push(format!(
             "TIGHT SCHEDULE: Schedule has {} minute(s) discrepancy against the {}-minute cap, but blocks are contiguous.",
             discrepancy_minutes.abs(),
             total_minutes
         ));
-        "TIGHT".to_string()
+        TimelineStatus::Tight
     } else {
         coach_warnings.push(
             "INVALID TIMELINE: Mathematical discrepancies detected. Adjust block durations to restore contiguity."
                 .to_string(),
         );
-        "INVALID".to_string()
+        TimelineStatus::Invalid
     };
 
     VerifyTimelineOutput {
@@ -209,57 +163,65 @@ pub fn verify_timeline_math(input: VerifyTimelineInput) -> VerifyTimelineOutput 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::TimelineToolBlock;
 
-    fn sample_valid_60m_blocks() -> Vec<TimelineBlockInput> {
+    fn sample_valid_60m_blocks() -> Vec<TimelineToolBlock> {
         vec![
-            TimelineBlockInput {
+            TimelineToolBlock {
                 start_min: 0,
                 end_min: 5,
                 label: "Whiteboard Brief".to_string(),
-                block_type: "brief".to_string(),
-                notes: "Brief athletes on movement stimulus".to_string(),
+                type_: Some("brief".to_string()),
+                notes: Some("Brief athletes on movement stimulus".to_string()),
+                section: None,
             },
-            TimelineBlockInput {
+            TimelineToolBlock {
                 start_min: 5,
                 end_min: 17,
                 label: "Dynamic Warm-up & Game".to_string(),
-                block_type: "warmup".to_string(),
-                notes: "Broomstick reaction game".to_string(),
+                type_: Some("warmup".to_string()),
+                notes: Some("Broomstick reaction game".to_string()),
+                section: None,
             },
-            TimelineBlockInput {
+            TimelineToolBlock {
                 start_min: 17,
                 end_min: 20,
                 label: "Transition: Barbell Loading".to_string(),
-                block_type: "transition".to_string(),
-                notes: "3-minute station setup".to_string(),
+                type_: Some("transition".to_string()),
+                notes: Some("3-minute station setup".to_string()),
+                section: None,
             },
-            TimelineBlockInput {
+            TimelineToolBlock {
                 start_min: 20,
                 end_min: 35,
                 label: "Strength: Front Squat E2MOM".to_string(),
-                block_type: "strength".to_string(),
-                notes: "Film and critique bottom depth".to_string(),
+                type_: Some("strength".to_string()),
+                notes: Some("Film and critique bottom depth".to_string()),
+                section: None,
             },
-            TimelineBlockInput {
+            TimelineToolBlock {
                 start_min: 35,
                 end_min: 38,
                 label: "Transition: Metcon Prep".to_string(),
-                block_type: "transition".to_string(),
-                notes: "3-minute warm-up sets".to_string(),
+                type_: Some("transition".to_string()),
+                notes: Some("3-minute warm-up sets".to_string()),
+                section: None,
             },
-            TimelineBlockInput {
+            TimelineToolBlock {
                 start_min: 38,
                 end_min: 55,
                 label: "Metcon: 15min AMRAP".to_string(),
-                block_type: "metcon".to_string(),
-                notes: "Coach active floor pacing".to_string(),
+                type_: Some("metcon".to_string()),
+                notes: Some("Coach active floor pacing".to_string()),
+                section: None,
             },
-            TimelineBlockInput {
+            TimelineToolBlock {
                 start_min: 55,
                 end_min: 60,
                 label: "Cooldown & Equipment Reset".to_string(),
-                block_type: "cooldown".to_string(),
-                notes: "Parasympathetic breathing".to_string(),
+                type_: Some("cooldown".to_string()),
+                notes: Some("Parasympathetic breathing".to_string()),
+                section: None,
             },
         ]
     }
@@ -272,7 +234,7 @@ mod tests {
         };
         let output = verify_timeline_math(input);
         assert!(output.is_valid);
-        assert_eq!(output.feasibility_status, "OPTIMAL");
+        assert_eq!(output.feasibility_status, TimelineStatus::Optimal);
         assert_eq!(output.discrepancy_minutes, 0);
         assert_eq!(output.scheduled_minutes, 60);
         assert!(output.issues.is_empty());
@@ -290,8 +252,11 @@ mod tests {
         };
         let output = verify_timeline_math(input);
         assert!(!output.is_valid);
-        assert_eq!(output.feasibility_status, "INVALID");
-        let has_gap_issue = output.issues.iter().any(|i| i.issue_type == "GAP");
+        assert_eq!(output.feasibility_status, TimelineStatus::Invalid);
+        let has_gap_issue = output
+            .issues
+            .iter()
+            .any(|i| i.issue_type == TimelineIssueType::Gap);
         assert!(has_gap_issue, "Should identify gap issue");
     }
 
@@ -306,8 +271,11 @@ mod tests {
         };
         let output = verify_timeline_math(input);
         assert!(!output.is_valid);
-        assert_eq!(output.feasibility_status, "INVALID");
-        let has_overlap = output.issues.iter().any(|i| i.issue_type == "OVERLAP");
+        assert_eq!(output.feasibility_status, TimelineStatus::Invalid);
+        let has_overlap = output
+            .issues
+            .iter()
+            .any(|i| i.issue_type == TimelineIssueType::Overlap);
         assert!(has_overlap, "Should identify overlap issue");
     }
 
@@ -323,9 +291,12 @@ mod tests {
         let output = verify_timeline_math(input);
         assert!(!output.is_valid);
         // Small discrepancy (<= 5) without gaps is classified as TIGHT
-        assert_eq!(output.feasibility_status, "TIGHT");
+        assert_eq!(output.feasibility_status, TimelineStatus::Tight);
         assert_eq!(output.discrepancy_minutes, 2);
-        let has_sum = output.issues.iter().any(|i| i.issue_type == "SUM_MISMATCH");
+        let has_sum = output
+            .issues
+            .iter()
+            .any(|i| i.issue_type == TimelineIssueType::SumMismatch);
         assert!(has_sum, "Should identify sum mismatch");
     }
 
@@ -342,7 +313,7 @@ mod tests {
         let has_dur_issue = output
             .issues
             .iter()
-            .any(|i| i.issue_type == "INVALID_DURATION");
+            .any(|i| i.issue_type == TimelineIssueType::InvalidDuration);
         assert!(has_dur_issue, "Should flag zero/negative duration");
     }
 
@@ -354,7 +325,10 @@ mod tests {
         };
         let output = verify_timeline_math(input);
         assert!(!output.is_valid);
-        assert_eq!(output.feasibility_status, "INVALID");
-        assert_eq!(output.issues[0].issue_type, "EMPTY_TIMELINE");
+        assert_eq!(output.feasibility_status, TimelineStatus::Invalid);
+        assert_eq!(
+            output.issues[0].issue_type,
+            TimelineIssueType::EmptyTimeline
+        );
     }
 }

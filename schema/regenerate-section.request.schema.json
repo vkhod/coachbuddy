@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cocoach.vkhod.dev/schema/regenerate-section.request.schema.json",
+  "title": "RegenerateSectionRequest",
+  "description": "POST /api/v1/plans/{id}/sections/{section}/regenerate. Quick chips only add text to the instruction.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "instruction"
+  ],
+  "properties": {
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    }
+  }
+}

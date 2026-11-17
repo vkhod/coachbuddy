@@ -1,0 +1,274 @@
+{
+  "planId": "pl_7f3a",
+  "coachId": "c_01",
+  "revision": 1,
+  "input": {
+    "imageRef": "img_91c",
+    "comment": "senior athlete today. ankle injury returning after 2 weeks, one shoulder tear",
+    "classMinutes": 60
+  },
+  "today": [
+    {
+      "label": "Senior",
+      "count": 1,
+      "tier": "senior",
+      "fromComment": "senior athlete today"
+    }
+  ],
+  "wod": {
+    "title": "Clean + front squat, Pendlay row, 20 min EMOM",
+    "date": "2026-11-18",
+    "parts": [
+      {
+        "id": "A",
+        "name": "Build a",
+        "kind": "strength",
+        "prescription": "E1.5 x 6: 2 power clean + 2 front squat @ 75%",
+        "minutes": 9
+      },
+      {
+        "id": "B",
+        "name": "Build b",
+        "kind": "strength",
+        "prescription": "Pendlay row 8-8-6-6, heavier each set; b/t sets 30s heavy plank hold",
+        "minutes": 10
+      },
+      {
+        "id": "C",
+        "name": "Engine",
+        "kind": "conditioning",
+        "prescription": "20 min EMOM (5 rounds): 8 burpees, 16 Russian KB swings, 24 sit-ups, 64 DU",
+        "minutes": 20
+      }
+    ]
+  },
+  "warmup": {
+    "minutes": 12,
+    "targets": [
+      {
+        "area": "Hips and ankles",
+        "why": "Front squat depth in A, burpees and DU in C"
+      },
+      {
+        "area": "Upper back",
+        "why": "Rack position in A, rows in B"
+      }
+    ],
+    "blocks": [
+      {
+        "name": "Partner mirror game",
+        "minutes": 4,
+        "items": [
+          "Mirror your partner's shuffles and squats",
+          "Switch leader every 30s"
+        ]
+      },
+      {
+        "name": "Barbell prep",
+        "minutes": 8,
+        "items": [
+          "Front squat holds x5",
+          "Hang power clean x5, empty bar",
+          "Pendlay row x8, empty bar"
+        ]
+      }
+    ]
+  },
+  "parts": [
+    {
+      "partId": "A",
+      "layout": "lines",
+      "tiers": {
+        "rx": {
+          "line": "E1.5 x 6: 2 power clean + 2 front squat @ 75%"
+        },
+        "scaled": {
+          "line": "Same, @ 60-65%, or hang power clean"
+        },
+        "senior": {
+          "line": "DB hang clean + goblet squat, 2+2, smooth tempo"
+        }
+      },
+      "cues": [
+        "Bar close, hips through",
+        "Elbows high in the catch",
+        "Brace before the squat"
+      ]
+    },
+    {
+      "partId": "B",
+      "layout": "lines",
+      "tiers": {
+        "rx": {
+          "line": "Pendlay row 8-8-6-6, heavier each set; 30s heavy plank b/t"
+        },
+        "scaled": {
+          "line": "Same reps, moderate load; 30s plank b/t"
+        },
+        "senior": {
+          "line": "Chest-supported DB row 8-8-6-6; 20s plank from knees"
+        }
+      },
+      "cues": [
+        "Bar returns to the floor each rep",
+        "Flat back, chest over the bar"
+      ]
+    },
+    {
+      "partId": "C",
+      "layout": "grid",
+      "columns": [
+        "Burpees",
+        "Russian KBS",
+        "Sit-ups",
+        "DU"
+      ],
+      "tiers": {
+        "rx": {
+          "line": "8 burpees, 16 KBS 24/16, 24 sit-ups, 64 DU",
+          "cells": [
+            "8",
+            "16 @ 24/16",
+            "24",
+            "64"
+          ]
+        },
+        "rxPlus": {
+          "line": "10 burpees, 16 KBS 32/24, 24 sit-ups, 80 DU",
+          "cells": [
+            "10",
+            "16 @ 32/24",
+            "24",
+            "80"
+          ]
+        },
+        "scaled": {
+          "line": "6 burpees, 14 KBS 16/12, 20 sit-ups, 100 singles",
+          "cells": [
+            "6",
+            "14 @ 16/12",
+            "20",
+            "100 singles"
+          ]
+        },
+        "senior": {
+          "line": "6 step-back burpees, 12 KBS 12/8, 15 sit-ups, 60s bike",
+          "cells": [
+            "6 step-back",
+            "12 @ 12/8",
+            "15",
+            "60s bike"
+          ]
+        }
+      },
+      "cues": [
+        "Finish each minute with 10-15s rest",
+        "Hips snap, arms float on the swing"
+      ]
+    }
+  ],
+  "injuries": [
+    {
+      "label": "Ankle",
+      "fromComment": "ankle injury returning after 2 weeks",
+      "returnNote": "returning after 2 weeks",
+      "warmup": "Skip the jumping in the mirror game; ankle circles and calf raises",
+      "parts": [
+        {
+          "partId": "A",
+          "suggestion": "Box squat to a comfortable depth; skip the clean if landing hurts"
+        },
+        {
+          "partId": "C",
+          "suggestion": "Step-back burpees, bike instead of DU"
+        }
+      ],
+      "caution": "Suggestion only. Check with the athlete; stop on pain."
+    },
+    {
+      "label": "Shoulder",
+      "fromComment": "one shoulder tear",
+      "warmup": "Band pull-aparts instead of barbell work overhead",
+      "parts": [
+        {
+          "partId": "A",
+          "suggestion": "Goblet squat only, no clean"
+        },
+        {
+          "partId": "B",
+          "suggestion": "Single-arm DB row on the good side, light"
+        },
+        {
+          "partId": "C",
+          "suggestion": "Squat to target instead of burpees, no KB"
+        }
+      ],
+      "caution": "Suggestion only. Check with the athlete; stop on pain."
+    }
+  ],
+  "timeline": {
+    "totalMinutes": 60,
+    "provisional": false,
+    "status": "OPTIMAL",
+    "blocks": [
+      {
+        "startMin": 0,
+        "endMin": 3,
+        "label": null,
+        "section": "brief"
+      },
+      {
+        "startMin": 3,
+        "endMin": 15,
+        "label": "Warm-up",
+        "section": "warmup"
+      },
+      {
+        "startMin": 15,
+        "endMin": 24,
+        "label": "A. Clean + front squat",
+        "section": "A"
+      },
+      {
+        "startMin": 24,
+        "endMin": 34,
+        "label": "B. Pendlay row",
+        "section": "B"
+      },
+      {
+        "startMin": 34,
+        "endMin": 37,
+        "label": "Set up KBs and ropes",
+        "section": "transition"
+      },
+      {
+        "startMin": 37,
+        "endMin": 57,
+        "label": "Engine EMOM",
+        "section": "C"
+      },
+      {
+        "startMin": 57,
+        "endMin": 60,
+        "label": "Cool-down"
+      }
+    ]
+  },
+  "sectionStatus": {
+    "wod": {
+      "state": "done"
+    },
+    "warmup": {
+      "state": "done"
+    },
+    "parts": {
+      "state": "done"
+    },
+    "injuries": {
+      "state": "done"
+    },
+    "timeline": {
+      "state": "done"
+    }
+  }
+}

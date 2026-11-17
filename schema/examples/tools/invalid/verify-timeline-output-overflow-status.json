@@ -1,0 +1,13 @@
+{
+  "$def": "VerifyTimelineOutput",
+  "value": {
+    "isValid": false,
+    "totalMinutes": 60,
+    "scheduledMinutes": 65,
+    "discrepancyMinutes": -5,
+    "feasibilityStatus": "OVERFLOW",
+    "coachWarnings": [],
+    "issues": [],
+    "blocks": []
+  }
+}

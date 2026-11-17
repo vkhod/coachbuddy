@@ -7,6 +7,7 @@ This directory contains `mcp-rust` (`:8082`), a high-performance, deterministic 
 ## 1. Directory Layout
 
 - `src/main.rs`: Axum router (`/health`, `/mcp`, `/tools/history`, `/tools/timeline`, `/tools/qr`), optional MongoDB connection pool (`AppState`), and server startup.
+- `src/contract.rs`: tool input and output types generated from `schema/tools.schema.json` by `scripts/gen-schema` (do not edit); `src/contract_tests.rs` checks the shared examples.
 - `src/mcp.rs`: JSON-RPC 2.0 MCP protocol dispatcher (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`) and JSON Schema tool definitions.
 - `src/domain/history.rs`: `get_recent_coaching_history` implementation querying MongoDB `wod_sessions` for recent warm-up drills to prevent repetition.
 - `src/domain/timeline.rs`: `verify_timeline_math` pure deterministic verifier checking `0..totalMinutes` contiguity, positive block durations, gaps/overlaps, and exact duration sum.
