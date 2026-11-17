@@ -1,0 +1,62 @@
+# Build-only check for the service images on pull requests.
+# An image is built when its service directory changes; all four are built when this
+# file changes. Nothing is pushed. Phase 6 adds tagging and pushing to GHCR on merge.
+name: Docker build
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: changed services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.pick.outputs.services }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed="$(git diff --name-only "$BASE...$HEAD")"
+          all=0
+          if printf '%s\n' "$changed" | grep -qx '.github/workflows/docker-build.yml'; then all=1; fi
+          picked='[]'
+          for entry in gateway-go:services/gateway-go agents-python:services/agents-python mcp-rust:services/mcp-rust pwa-nextjs:web/pwa-nextjs; do
+            name="${entry%%:*}"
+            dir="${entry#*:}"
+            if [ "$all" = 1 ] || printf '%s\n' "$changed" | grep -q "^$dir/"; then
+              picked="$(jq -c --arg n "$name" --arg d "$dir" '. + [{name: $n, context: $d}]' <<<"$picked")"
+            fi
+          done
+          echo "services=$picked" >> "$GITHUB_OUTPUT"
+          echo "Images to build: $picked"
+
+  build:
+    name: docker build (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
