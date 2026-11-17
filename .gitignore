@@ -19,6 +19,9 @@ bin/
 .env.*.local
 .coachbuddy_vault.json
 
+# Working copies written by Claude sessions
+Claude outputs/
+
 # IDE & OS
 .idea/
 .vscode/
