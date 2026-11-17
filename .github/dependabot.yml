@@ -35,6 +35,16 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: react-dom
         update-types: ["version-update:semver-major"]
+      # Tooling majors change the build (TypeScript 7 has no JS API for Next 14,
+      # Tailwind 4 moves its PostCSS plugin), so they are planned work too.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: tailwindcss
+        update-types: ["version-update:semver-major"]
+      - dependency-name: lucide-react
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: docker
     directories:
@@ -46,13 +56,16 @@ updates:
     groups:
       docker: { patterns: ["*"] }
     ignore:
-      # Language runtimes move by major version on purpose, together with the code.
+      # Language runtimes move on purpose, together with the CI pin and the lock file.
+      # For these images a release line is a minor bump (python 3.12 -> 3.15), so minor is ignored too.
       - dependency-name: golang
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: python
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: rust
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: node
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: docker-compose
     directory: /
