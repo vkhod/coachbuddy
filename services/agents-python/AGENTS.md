@@ -1,41 +1,49 @@
-# Python Multi-Agent Orchestrator — Agent Rules (`services/agents-python`)
+# Agents (`services/agents-python`): rules
 
-This directory contains `agents-python` (`:8081`), the Python 3.12+ FastAPI service orchestrating CoachBuddy's multi-agent pipeline with **Google Agent Development Kit (ADK)**, **LiteLLM**, and the **Rust MCP Server** (`mcp-rust`).
+`agents-python` (`:8081`) builds class plans with Google ADK (decision D4), LiteLLM and the mcp-rust tools. Python 3.12, FastAPI. The gateway calls it; nothing else does.
 
----
+## 1. Layout
 
-## 1. Directory Layout
+- `app/main.py`: FastAPI app. `GET /health`, `GET /api/v1/topology`, `POST /api/v1/orchestrate` (internal token required). Publishes section events to Redis for the gateway's SSE endpoint.
+- `app/pipeline.py`: builds the ADK `Workflow` per request and assembles the plan document.
+- `app/agents/sections.py`: one `SectionAgent` per plan section. It runs the section's `LlmAgent`, checks the answer, asks for one repair, or marks the section failed.
+- `app/agents/prompts.py`: the instructions. `app/agents/outputs.py`: what each agent answers, built from the contract types. `app/agents/schema_for_model.py`: the schema sent to the model.
+- `app/llm.py`: routes (provider, model, key per role, from the gateway's `routingConfig`) and the `LiteLlm` factory.
+- `app/mcp_tools.py`: the mcp-rust tools through ADK's `McpToolset` (Streamable HTTP).
+- `app/contract/`: generated from `schema/` (do not edit), plus `rules.py`, the cross-field rules.
+- `app/models.py`: the request the gateway sends today; replaced by the contract's `CreatePlanRequest` in Phase 2 step 10.
+- `tests/`: `test_pipeline.py` (pipeline with recorded answers), `test_wiring.py` (LiteLlm, MCP results, endpoint), `test_contract.py` (shared examples). Recorded answers in `tests/recordings/`.
 
-- `app/main.py`: FastAPI application (`/health`, `/api/v1/orchestrate`, `/orchestrate`).
-- `app/adk_pipeline.py`: Multi-agent orchestration pipeline implementing the 3-stage `SequentialAgent` + `ParallelAgent` topology.
-- `app/mcp_client.py`: Async JSON-RPC 2.0 client (`RustMcpClient`) calling `mcp-rust` (`http://localhost:8082/mcp`). Tool errors are raised to the caller; MCP tools are never re-implemented locally.
-- `app/contract/`: Pydantic models generated from `schema/` by `scripts/gen-schema` (do not edit), plus `rules.py`, the hand-written cross-field rules. These models are the agents' output schemas.
-- `app/models.py`: Strict Pydantic v2 models matching the cross-service `camelCase` JSON contract.
-- `tests/test_orchestrator.py`: Pytest suite verifying end-to-end orchestration, MCP tool integration, timeline math, and 4-tier scaling outputs.
+## 2. Pipeline
 
----
+```
+START -> WodParserAgent -> WarmupPlannerAgent --+
+                        -> ScalingAgent       --+-> TimelineAgent
+```
 
-## 2. Multi-Agent Pipeline Topology & Rules
+- ADK `Workflow` (2.14.1 deprecates `SequentialAgent`/`ParallelAgent`; capability report, decision 5.1). Warm-up and Scaling run in parallel.
+- One `LlmAgent` per role, each with its own `LiteLlm(model, api_key=...)` built for this request. Keys never go into `os.environ`.
+- Only the parser sees the screenshot. The others get earlier sections from session state as JSON.
+- The pipeline calls the mcp-rust tools itself (decision 5.2): `get_recent_coaching_history` before the warm-up, `verify_timeline_math` after the timeline answer.
+- The Injury agent and the "today" groups come in step 9; until then `sectionStatus.injuries` is `skipped`.
 
-1. **Stage 1 — `WodParserAgent`**: Extracts workout blocks (`strength`, `skill`, `metcon`, `engine`), movement taxonomy, `primaryJoints`, and physiological `stimulus` from raw WOD text or multimodal whiteboard screenshots.
-2. **Stage 2 — `ParallelCoachingStage` (`ParallelAgent`)**:
-   - **`WarmupPlannerAgent`**: Calls `mcp-rust` tool `get_recent_coaching_history` (`coachId`, `limit=5`) so warm-up games are never repeated on consecutive days, producing a 2-phase warm-up (Phase 1: Reaction/Partner/Broomstick Game; Phase 2: Biomechanical PVC/joint prep).
-   - **`ScalingAndCuesAgent`**: Produces `cues.external`, `cues.internal`, `cues.commonFaults` (`[{"fault", "fix"}]`), and 4-tier scaling (`rxPlus`, `scaled`, `seniorsMasters`, and `injured` with `wristOrShoulder`, `kneePain`, `lowerBack`).
-3. **Stage 3 — `TimelineLogisticsAgent`**: Generates a contiguous `0..totalMinutes` class timeline and validates it via the `mcp-rust` tool `verify_timeline_math`.
-4. **Single Execution Mode (No Fallback Content)**:
-   - Every agent runs against a real LLM, bound per agent or globally to the coach's BYOK credentials (`gemini`, `openai`, `anthropic`, `groq`).
-   - If an LLM call fails (timeout, provider error, or invalid JSON after one repair retry) or an MCP tool call fails, the stage reports `status: "failed"` with the reason. It never returns substitute content, and agent traces must report what actually ran.
-   - Tests use recorded LLM responses under `tests/`, not live keys and not fallback code in `app/`.
-   - The current `app/adk_pipeline.py` and `app/mcp_client.py` still contain fallbacks; they are removed during the redesign.
+## 3. Checks, repair and failure (D3)
 
----
+1. The model gets a relaxed schema (structure, enums, required fields; limits written as descriptions). Gemini rejects the full contract schema as too complex for constrained decoding.
+2. The answer is validated against the full contract model, then `app/contract/rules.py`, then (timeline) `verify_timeline_math`.
+3. Any problem goes back to the model once, listed in the instruction. A second failure fails the section with the reasons.
+4. A provider error or an MCP tool error (unreachable, or `isError: true`) fails the section at once, without retry.
+5. A section that needs the WOD fails when the parser failed. Without a warm-up, the timeline reserves 12 minutes and is marked `provisional`.
+6. Never fill a section with local content. Tests use recorded answers in `tests/`, never fallback code in `app/`.
+7. Errors shown to the coach are at most 300 characters and never contain the key.
 
-## 3. Commands
+## 4. Commands
 
 ```bash
-# Run test suite
-pytest -v
-
-# Start FastAPI server locally on :8081
-uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
+pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+pytest -v                                   # no key, no network
+MCP_TEST_URL=http://localhost:8082 pytest   # also against a running mcp-rust
+uvicorn app.main:app --host 0.0.0.0 --port 8081
 ```
+
+Dependencies: edit `requirements.in`, then `uv pip compile requirements.in --python-version 3.12 --generate-hashes -o requirements.txt`. `google-adk`, `litellm` and `mcp` are pinned and move together.

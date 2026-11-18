@@ -25,6 +25,7 @@ RULE_ERRORS = {
     "rule-cells-mismatch.json": "parts[C].tiers.scaled: 3 cells for 4 columns",
     "rule-rxplus-on-strength.json": "parts[A].tiers.rxPlus: RX+ is only for conditioning parts, A is strength",
     "rule-unknown-part.json": "injuries[0] (Ankle).parts: no WOD part with id D",
+    "rule-warmup-minutes.json": "warmup: blocks add up to 12 minutes, minutes is 14",
     "rule-timeline-gap.json": None,  # checked by mcp-rust verify_timeline_math
 }
 

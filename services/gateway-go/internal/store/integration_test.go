@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coachbuddy/gateway-go/internal/modelcatalog"
 	"github.com/coachbuddy/gateway-go/internal/models"
 	"github.com/google/uuid"
 )
@@ -27,7 +28,7 @@ func openTestStore(t *testing.T) *DataStore {
 	}
 	ctx := context.Background()
 	dbName := "coachbuddy_test_" + uuid.NewString()[:8]
-	ds, err := Open(ctx, testVault(t), Config{PostgresDSN: pg, MongoURI: mg, MongoDB: dbName, RedisURL: rd})
+	ds, err := Open(ctx, testVault(t), Config{PostgresDSN: pg, MongoURI: mg, MongoDB: dbName, RedisURL: rd, Models: modelcatalog.Embedded()})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -64,6 +65,7 @@ func TestOpen_UnreachableDatabaseIsAnError(t *testing.T) {
 		PostgresDSN: "postgres://x:y@127.0.0.1:1/db?sslmode=disable&connect_timeout=1",
 		MongoURI:    "mongodb://127.0.0.1:1",
 		RedisURL:    "redis://127.0.0.1:1/0",
+		Models:      modelcatalog.Embedded(),
 	})
 	if err == nil {
 		t.Fatal("Open must fail when the databases cannot be reached")
@@ -112,7 +114,7 @@ func TestIntegration_KeysPrefsAndRouting(t *testing.T) {
 	b := newCoach(t, ds, "b@box.com")
 
 	prefs, err := ds.GetAgentPrefs(ctx, a.ID)
-	if err != nil || len(prefs) != len(AgentRoles) || prefs[0].ModelIdentifier != DefaultModel {
+	if err != nil || len(prefs) != len(AgentRoles) || prefs[0].ModelIdentifier != modelcatalog.Embedded().Default().ID {
 		t.Fatalf("defaults: got %d prefs, %v", len(prefs), err)
 	}
 
@@ -148,7 +150,13 @@ func TestIntegration_KeysPrefsAndRouting(t *testing.T) {
 	if _, err := ds.SaveAgentPrefs(ctx, a.ID, []models.AgentModelPref{{AgentRole: "bogus"}}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("unknown role: want ErrInvalidInput, got %v", err)
 	}
-	saved, err := ds.SaveAgentPrefs(ctx, a.ID, []models.AgentModelPref{{AgentRole: "warmup", Provider: "gemini", ModelIdentifier: "gemini/x"}})
+	if _, err := ds.SaveAgentPrefs(ctx, a.ID, []models.AgentModelPref{{AgentRole: "warmup", Provider: "gemini", ModelIdentifier: "gemini/x"}}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("model not in the list: want ErrInvalidInput, got %v", err)
+	}
+	if _, err := ds.SaveAPIKey(ctx, a.ID, "groq", "gsk-x", false); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("provider not in the list: want ErrInvalidInput, got %v", err)
+	}
+	saved, err := ds.SaveAgentPrefs(ctx, a.ID, []models.AgentModelPref{{AgentRole: "warmup", Provider: "gemini", ModelIdentifier: "gemini/gemini-3.5-flash-lite"}})
 	if err != nil || len(saved) != 1 || saved[0].AgentRole != "warmup" {
 		t.Fatalf("save prefs: %+v, %v", saved, err)
 	}
@@ -157,10 +165,10 @@ func TestIntegration_KeysPrefsAndRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := routes["warmup"]; r.APIKey != "AIza-second" || r.Model != "gemini/x" {
+	if r := routes["warmup"]; r.APIKey != "AIza-second" || r.Model != "gemini/gemini-3.5-flash-lite" {
 		t.Errorf("warmup route: %+v", r)
 	}
-	if r := routes["parser"]; r.Provider != "openai" || r.APIKey != "sk-openai" {
+	if r := routes["parser"]; r.Provider != "openai" || r.APIKey != "sk-openai" || r.Model != "openai/gpt-6-luna" {
 		t.Errorf("parser should use the openai primary: %+v", r)
 	}
 

@@ -257,3 +257,36 @@ func TestStreamSessionEvents_RejectsOtherCoachesAndUnknownSessions(t *testing.T)
 		t.Errorf("owner: expected text/event-stream, got %q", ct)
 	}
 }
+
+func TestListModels_ReturnsTheConfiguredList(t *testing.T) {
+	api, _ := newTestAPIHandler(t)
+	rr := httptest.NewRecorder()
+	api.ListModels(rr, requestAs(http.MethodGet, "/api/v1/settings/models", "coach-alpha", ""))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var body struct {
+		Providers []struct{ ID string } `json:"providers"`
+		Models    []struct {
+			ID      string `json:"id"`
+			Default bool   `json:"default"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Providers) != 3 || body.Providers[0].ID != "gemini" {
+		t.Errorf("providers: %+v", body.Providers)
+	}
+	if len(body.Models) == 0 || body.Models[0].ID != "gemini/gemini-3.8-flash" || !body.Models[0].Default {
+		t.Errorf("models: %+v", body.Models)
+	}
+}
+
+func TestShareForAthletes_DropsAgentRuns(t *testing.T) {
+	doc := map[string]interface{}{"agentRuns": []interface{}{map[string]interface{}{"agent": "WodParserAgent"}}, "wod": map[string]interface{}{}}
+	sanitizeForAthletes(doc)
+	if _, ok := doc["agentRuns"]; ok {
+		t.Error("agent runs must not reach athletes")
+	}
+}

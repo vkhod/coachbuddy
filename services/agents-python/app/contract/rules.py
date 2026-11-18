@@ -56,6 +56,11 @@ def check_plan_rules(plan: Plan) -> list[str]:
             if scaled_ids.count(part_id) != 1:
                 errors.append(f"parts: WOD part {part_id} needs exactly one entry, found {scaled_ids.count(part_id)}")
 
+    if plan.warmup is not None:
+        total = sum(b.minutes for b in plan.warmup.blocks)
+        if total != plan.warmup.minutes:
+            errors.append(f"warmup: blocks add up to {total} minutes, minutes is {plan.warmup.minutes}")
+
     for i, injury in enumerate(plan.injuries or []):
         for ip in injury.parts:
             if wod_parts and ip.partId not in wod_parts:

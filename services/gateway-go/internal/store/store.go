@@ -16,6 +16,7 @@ import (
 
 	"github.com/coachbuddy/gateway-go/internal/auth"
 	"github.com/coachbuddy/gateway-go/internal/crypto"
+	"github.com/coachbuddy/gateway-go/internal/modelcatalog"
 	"github.com/coachbuddy/gateway-go/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -62,14 +63,17 @@ type Config struct {
 	MongoURI    string
 	MongoDB     string
 	RedisURL    string
+	// Models is the provider and model list (internal/modelcatalog). Required.
+	Models *modelcatalog.Catalog
 }
 
 type DataStore struct {
-	vault *crypto.Vault
-	pg    *pgxpool.Pool
-	mongo *mongo.Client
-	db    *mongo.Database
-	redis *redis.Client
+	vault  *crypto.Vault
+	models *modelcatalog.Catalog
+	pg     *pgxpool.Pool
+	mongo  *mongo.Client
+	db     *mongo.Database
+	redis  *redis.Client
 }
 
 // Open connects to all three databases and pings each one. It returns an error
@@ -79,13 +83,16 @@ func Open(ctx context.Context, vault *crypto.Vault, cfg Config) (*DataStore, err
 	if cfg.PostgresDSN == "" || cfg.MongoURI == "" || cfg.RedisURL == "" {
 		return nil, errors.New("store: PostgresDSN, MongoURI and RedisURL are required")
 	}
+	if cfg.Models == nil {
+		return nil, errors.New("store: the model list is required")
+	}
 	if cfg.MongoDB == "" {
 		cfg.MongoDB = "coachbuddy"
 	}
 	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 
-	ds := &DataStore{vault: vault}
+	ds := &DataStore{vault: vault, models: cfg.Models}
 
 	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
 	if err != nil {
@@ -258,6 +265,9 @@ func (ds *DataStore) UpdateCoachProfile(ctx context.Context, coachID, displayNam
 
 func (ds *DataStore) SaveAPIKey(ctx context.Context, coachID, provider, rawKey string, isPrimary bool) (*models.LLMAPIKey, error) {
 	cleanProvider := strings.ToLower(strings.TrimSpace(provider))
+	if !ds.models.HasProvider(cleanProvider) {
+		return nil, fmt.Errorf("%w: provider %q is not offered (choose one of %s)", ErrInvalidInput, cleanProvider, strings.Join(ds.models.ProviderIDs(), ", "))
+	}
 	ciphertext, nonce, err := ds.vault.Encrypt(coachID, cleanProvider, rawKey)
 	if err != nil {
 		return nil, err
@@ -328,19 +338,20 @@ func (ds *DataStore) DeleteAPIKey(ctx context.Context, coachID, keyID string) er
 
 // --- Per-agent model routing ---
 
-// DefaultModel is the model used when a coach has not chosen one for a role.
-// The model list moves to configuration in Phase 2 step 8.
-const DefaultModel = "gemini/gemini-3.8-flash"
+// Models returns the provider and model list the gateway was started with.
+func (ds *DataStore) Models() *modelcatalog.Catalog { return ds.models }
 
-// defaultAgentPrefs is the routing for a coach who has not saved their own.
-func defaultAgentPrefs() []*models.AgentModelPref {
+// defaultAgentPrefs is the routing for a coach who has not saved their own:
+// the list's default model for every role.
+func defaultAgentPrefs(c *modelcatalog.Catalog) []*models.AgentModelPref {
+	def := c.Default()
 	out := make([]*models.AgentModelPref, 0, len(AgentRoles))
 	for _, role := range AgentRoles {
 		out = append(out, &models.AgentModelPref{
 			ID:              "default-" + role,
 			AgentRole:       role,
-			Provider:        "gemini",
-			ModelIdentifier: DefaultModel,
+			Provider:        def.Provider,
+			ModelIdentifier: def.ID,
 		})
 	}
 	return out
@@ -374,7 +385,7 @@ func (ds *DataStore) GetAgentPrefs(ctx context.Context, coachID string) ([]*mode
 		return nil, fmt.Errorf("get agent prefs: %w", err)
 	}
 	if len(list) == 0 {
-		return defaultAgentPrefs(), nil
+		return defaultAgentPrefs(ds.models), nil
 	}
 	return orderPrefs(list), nil
 }
@@ -397,6 +408,9 @@ func (ds *DataStore) SaveAgentPrefs(ctx context.Context, coachID string, prefs [
 	for _, p := range prefs {
 		if !validRole(p.AgentRole) {
 			return nil, fmt.Errorf("%w: unknown agent role %q", ErrInvalidInput, p.AgentRole)
+		}
+		if !ds.models.Allows(p.Provider, p.ModelIdentifier) {
+			return nil, fmt.Errorf("%w: model %q is not offered for provider %q", ErrInvalidInput, p.ModelIdentifier, p.Provider)
 		}
 	}
 	err := pgx.BeginFunc(ctx, ds.pg, func(tx pgx.Tx) error {
@@ -428,16 +442,22 @@ func (ds *DataStore) BuildEphemeralRoutingConfig(ctx context.Context, coachID st
 	if err != nil {
 		return nil, err
 	}
-	return buildRoutes(ds.vault, coachID, keys, prefs)
+	return buildRoutes(ds.vault, ds.models, coachID, keys, prefs)
 }
 
 // buildRoutes resolves a provider, key and model for every agent role.
-// A role whose chosen provider has no key uses the primary key and the
-// primary provider's model.
-func buildRoutes(vault *crypto.Vault, coachID string, keys []*models.LLMAPIKey, prefs []*models.AgentModelPref) (map[string]models.EphemeralAgentRoute, error) {
+//
+// A role uses its own saved choice, else the "global" one, when that choice is still
+// in the model list and the coach has a key for its provider. Otherwise it uses the
+// primary key with that provider's default model. A saved model that has left the
+// list (for example groq, dropped on 2026-11-18) is therefore never sent to agents.
+func buildRoutes(vault *crypto.Vault, catalog *modelcatalog.Catalog, coachID string, keys []*models.LLMAPIKey, prefs []*models.AgentModelPref) (map[string]models.EphemeralAgentRoute, error) {
 	decryptedByProvider := make(map[string]string)
 	var primaryProvider, primaryKey string
 	for _, k := range keys {
+		if !catalog.HasProvider(k.Provider) {
+			continue
+		}
 		plain, err := vault.Decrypt(coachID, k.Provider, k.EncryptedKey, k.Nonce)
 		if err != nil || plain == "" {
 			continue
@@ -449,47 +469,34 @@ func buildRoutes(vault *crypto.Vault, coachID string, keys []*models.LLMAPIKey, 
 		}
 	}
 	if primaryKey == "" {
-		return nil, fmt.Errorf("no valid LLM API keys configured for coach %s", coachID)
+		return nil, fmt.Errorf("no valid LLM API key for coach %s (supported providers: %s)", coachID, strings.Join(catalog.ProviderIDs(), ", "))
 	}
+	primaryModel, _ := catalog.DefaultFor(primaryProvider)
 
 	prefByRole := make(map[string]*models.AgentModelPref)
 	for _, p := range prefs {
 		prefByRole[p.AgentRole] = p
 	}
+	usable := func(p *models.AgentModelPref) bool {
+		if p == nil || !catalog.Allows(p.Provider, p.ModelIdentifier) {
+			return false
+		}
+		_, ok := decryptedByProvider[p.Provider]
+		return ok
+	}
 
 	routes := make(map[string]models.EphemeralAgentRoute, len(AgentRoles))
 	for _, role := range AgentRoles {
-		provider := primaryProvider
-		model := DefaultModel
-		if p, ok := prefByRole[role]; ok && p.Provider != "" {
-			provider = p.Provider
-			model = p.ModelIdentifier
-		}
-		key, ok := decryptedByProvider[provider]
-		if !ok {
-			provider, key = primaryProvider, primaryKey
-			if g, ok := prefByRole["global"]; ok && g.Provider == primaryProvider && g.ModelIdentifier != "" {
-				model = g.ModelIdentifier
-			} else {
-				model = defaultModelFor(primaryProvider)
+		route := models.EphemeralAgentRoute{Provider: primaryProvider, APIKey: primaryKey, Model: primaryModel}
+		for _, p := range []*models.AgentModelPref{prefByRole[role], prefByRole["global"]} {
+			if usable(p) {
+				route = models.EphemeralAgentRoute{Provider: p.Provider, APIKey: decryptedByProvider[p.Provider], Model: p.ModelIdentifier}
+				break
 			}
 		}
-		routes[role] = models.EphemeralAgentRoute{Provider: provider, APIKey: key, Model: model}
+		routes[role] = route
 	}
 	return routes, nil
-}
-
-func defaultModelFor(provider string) string {
-	switch provider {
-	case "openai":
-		return "openai/gpt-4o"
-	case "anthropic":
-		return "anthropic/claude-3-7-sonnet-latest"
-	case "groq":
-		return "groq/llama-3.3-70b-versatile"
-	default:
-		return DefaultModel
-	}
 }
 
 // --- WOD session documents (MongoDB) ---

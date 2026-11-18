@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coachbuddy/gateway-go/internal/auth"
+	"github.com/coachbuddy/gateway-go/internal/modelcatalog"
 	"github.com/coachbuddy/gateway-go/internal/models"
 	"github.com/coachbuddy/gateway-go/internal/store"
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ type Store interface {
 	GetAgentPrefs(ctx context.Context, coachID string) ([]*models.AgentModelPref, error)
 	SaveAgentPrefs(ctx context.Context, coachID string, prefs []models.AgentModelPref) ([]*models.AgentModelPref, error)
 	BuildEphemeralRoutingConfig(ctx context.Context, coachID string) (map[string]models.EphemeralAgentRoute, error)
+	Models() *modelcatalog.Catalog
 
 	SaveSession(ctx context.Context, sessionID string, doc map[string]interface{}) error
 	GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error)
@@ -273,9 +275,13 @@ func (h *APIHandler) SaveKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Provider == "" {
-		req.Provider = "gemini"
+		req.Provider = h.Store.Models().Default().Provider
 	}
 	keyRec, err := h.Store.SaveAPIKey(r.Context(), coachID, req.Provider, req.APIKey, req.IsPrimary)
+	if errors.Is(err, store.ErrInvalidInput) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		writeStoreError(w, "save key", err)
 		return
@@ -331,6 +337,11 @@ func (h *APIHandler) SaveAgentPrefs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"preferences": prefs})
+}
+
+// ListModels returns the providers and models a coach can choose (internal/modelcatalog).
+func (h *APIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.Store.Models())
 }
 
 // --- WOD Session Generation & Orchestration ---
@@ -625,6 +636,7 @@ func (h *APIHandler) ResolveShareLink(w http.ResponseWriter, r *http.Request) {
 // Step 10 moves this to the new contract.
 func sanitizeForAthletes(doc map[string]interface{}) {
 	delete(doc, "agentTraces")
+	delete(doc, "agentRuns")
 	if tl, ok := doc["timeline"].(map[string]interface{}); ok {
 		delete(tl, "coachWarnings")
 		if blocks, ok := tl["blocks"].([]interface{}); ok {

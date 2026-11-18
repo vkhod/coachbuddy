@@ -11,6 +11,7 @@ import (
 	"github.com/coachbuddy/gateway-go/internal/auth"
 	"github.com/coachbuddy/gateway-go/internal/crypto"
 	"github.com/coachbuddy/gateway-go/internal/handlers"
+	"github.com/coachbuddy/gateway-go/internal/modelcatalog"
 	"github.com/coachbuddy/gateway-go/internal/store"
 )
 
@@ -57,6 +58,12 @@ func main() {
 	mcpRustURL := envOrDefault("MCP_RUST_URL", "http://localhost:8082")
 	shareBaseURL := envOrDefault("PUBLIC_SHARE_BASE_URL", "http://localhost:3000/s")
 
+	// The provider and model list: embedded, or MODELS_FILE to replace it without a rebuild.
+	catalog, err := modelcatalog.Load(os.Getenv("MODELS_FILE"))
+	if err != nil {
+		log.Fatalf("Invalid model list: %v", err)
+	}
+
 	vault, err := crypto.NewVault(masterKeyHex)
 	if err != nil {
 		log.Fatalf("Failed to initialize AES-256-GCM BYOK Vault: %v", err)
@@ -68,6 +75,7 @@ func main() {
 		MongoURI:    mongoURI,
 		MongoDB:     mongoDB,
 		RedisURL:    redisURL,
+		Models:      catalog,
 	})
 	if err != nil {
 		log.Fatalf("Cannot start without the databases: %v", err)
@@ -96,6 +104,7 @@ func main() {
 	authMux.HandleFunc("POST /api/v1/settings/keys", api.SaveKey)
 	authMux.HandleFunc("DELETE /api/v1/settings/keys/{id}", api.DeleteKey)
 
+	authMux.HandleFunc("GET /api/v1/settings/models", api.ListModels)
 	authMux.HandleFunc("GET /api/v1/settings/agents", api.GetAgentPrefs)
 	authMux.HandleFunc("PUT /api/v1/settings/agents", api.SaveAgentPrefs)
 

@@ -1,11 +1,12 @@
 # Direct runtime dependencies. Edit this file, then regenerate the lock:
 #   uv pip compile requirements.in --python-version 3.12 --generate-hashes -o requirements.txt
+# google-adk, litellm and mcp move together: check the ADK release notes first
+# (see claude/coach-buddy-adk-capability-report.md in the project for why litellm is above
+# the range ADK's own extras declare).
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.9.0
-httpx>=0.27.2
-motor>=3.6.0
-pymongo>=4.9.0
 redis>=5.2.0
-google-adk>=1.0.0
-litellm>=1.52.0
+google-adk==2.14.1
+litellm==1.109.1
+mcp==2.3.0
