@@ -9,23 +9,19 @@ import (
 	"time"
 
 	"github.com/coachbuddy/gateway-go/internal/auth"
-	"github.com/coachbuddy/gateway-go/internal/crypto"
 	"github.com/coachbuddy/gateway-go/internal/models"
-	"github.com/coachbuddy/gateway-go/internal/store"
 )
 
-func newTestAPIHandler(t *testing.T) (*APIHandler, *store.DataStore) {
-	vault, err := crypto.NewVault("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	if err != nil {
-		t.Fatalf("failed to create vault: %v", err)
-	}
-	ctx := context.Background()
-	ds := store.NewDataStore(ctx, vault, "", "", "", "")
+func newTestAPIHandler(t *testing.T) (*APIHandler, *fakeStore) {
+	t.Helper()
+	ds := newFakeStore()
 	tm, err := auth.NewTokenManager("test-jwt-secret-at-least-32-characters")
 	if err != nil {
 		t.Fatalf("failed to create token manager: %v", err)
 	}
-	api := NewAPIHandler(ds, tm, "http://localhost:8081", "http://localhost:8082", "http://localhost:3000/s", "test-internal-token")
+	// Nothing listens on port 1, so calls to agents-python and mcp-rust fail
+	// unless a test points the URLs at an httptest server.
+	api := NewAPIHandler(ds, tm, "http://127.0.0.1:1", "http://127.0.0.1:1", "http://localhost:3000/s", "test-internal-token")
 	return api, ds
 }
 

@@ -62,8 +62,17 @@ func main() {
 		log.Fatalf("Failed to initialize AES-256-GCM BYOK Vault: %v", err)
 	}
 
-	ctx := context.Background()
-	ds := store.NewDataStore(ctx, vault, pgDSN, mongoURI, mongoDB, redisURL)
+	// The databases are required in every environment: stop if any is unreachable.
+	ds, err := store.Open(context.Background(), vault, store.Config{
+		PostgresDSN: pgDSN,
+		MongoURI:    mongoURI,
+		MongoDB:     mongoDB,
+		RedisURL:    redisURL,
+	})
+	if err != nil {
+		log.Fatalf("Cannot start without the databases: %v", err)
+	}
+	defer ds.Close()
 	tm, err := auth.NewTokenManager(jwtSecret)
 	if err != nil {
 		log.Fatalf("Invalid JWT_SECRET: %v", err)

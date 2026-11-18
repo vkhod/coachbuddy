@@ -1,212 +1,176 @@
+// Package store is the gateway's storage layer: PostgreSQL for coaches, keys,
+// agent preferences and share links; MongoDB for WOD session documents; Redis
+// for session progress events.
+//
+// All three databases are required in every environment. A database error is
+// returned to the caller; there is no in-memory or on-disk substitute. In-memory
+// fakes live only in the test suites.
 package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-	"os"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coachbuddy/gateway-go/internal/auth"
 	"github.com/coachbuddy/gateway-go/internal/crypto"
 	"github.com/coachbuddy/gateway-go/internal/models"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// ErrCoachNotFound is returned when a coach ID has no account.
-var ErrCoachNotFound = errors.New("coach not found")
+var (
+	// ErrCoachNotFound is returned when a coach ID has no account.
+	ErrCoachNotFound = errors.New("coach not found")
+	// ErrInvalidCredentials is returned when the email is unknown or the password is wrong.
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	// ErrEmailTaken is returned when registering an email that already has an account.
+	ErrEmailTaken = errors.New("email already registered")
+	// ErrInvalidInput wraps validation failures that are the caller's fault.
+	ErrInvalidInput = errors.New("invalid input")
+	// ErrKeyNotFound is returned when a key ID does not exist for the coach.
+	ErrKeyNotFound = errors.New("api key not found")
+	// ErrSessionNotFound is returned when a session ID has no document.
+	ErrSessionNotFound = errors.New("session not found")
+	// ErrLinkNotFound is returned when a share code is unknown or expired.
+	ErrLinkNotFound = errors.New("shared link expired or not found")
+)
+
+// AgentRoles lists the roles that can have their own model routing, in display order.
+var AgentRoles = []string{"global", "parser", "warmup", "scaling", "timeline"}
+
+const (
+	sessionsCollection = "wod_sessions"
+	eventsChannel      = "session:events:"
+	eventsBuffer       = "session:buffered_events:"
+	connectTimeout     = 10 * time.Second
+)
+
+// Config holds the connection settings. All fields are required except MongoDB,
+// which defaults to "coachbuddy".
+type Config struct {
+	PostgresDSN string
+	MongoURI    string
+	MongoDB     string
+	RedisURL    string
+}
 
 type DataStore struct {
-	mu          sync.RWMutex
-	vault       *crypto.Vault
-	pgPool      *pgxpool.Pool
-	mongoClient *mongo.Client
-	mongoDB     *mongo.Database
-	redisClient *redis.Client
-
-	// In-memory synchronized store (acts as fast cache + standalone fallback)
-	vaultFile    string
-	coaches      map[string]*models.Coach
-	coachesByEm  map[string]string
-	apiKeys      map[string]*models.LLMAPIKey
-	agentPrefs   map[string]map[string]*models.AgentModelPref // coachID -> agentRole -> pref
-	defaultPrefs map[string]*models.AgentModelPref            // agentRole -> default pref for coaches without their own
-	sessions     map[string]map[string]interface{}            // sessionID -> document
-	sharedLinks  map[string]*models.SharedLink
+	vault *crypto.Vault
+	pg    *pgxpool.Pool
+	mongo *mongo.Client
+	db    *mongo.Database
+	redis *redis.Client
 }
 
-type diskKeyRecord struct {
-	ID           string    `json:"id"`
-	CoachID      string    `json:"coachId"`
-	Provider     string    `json:"provider"`
-	EncryptedKey []byte    `json:"encryptedKey"`
-	Nonce        []byte    `json:"nonce"`
-	KeyHint      string    `json:"keyHint"`
-	IsPrimary    bool      `json:"isPrimary"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-}
-
-func (ds *DataStore) loadLocalVaultFile() {
-	if ds.vaultFile == "" {
-		return
+// Open connects to all three databases and pings each one. It returns an error
+// naming the first database that cannot be reached; the gateway does not start
+// without them.
+func Open(ctx context.Context, vault *crypto.Vault, cfg Config) (*DataStore, error) {
+	if cfg.PostgresDSN == "" || cfg.MongoURI == "" || cfg.RedisURL == "" {
+		return nil, errors.New("store: PostgresDSN, MongoURI and RedisURL are required")
 	}
-	raw, err := os.ReadFile(ds.vaultFile)
+	if cfg.MongoDB == "" {
+		cfg.MongoDB = "coachbuddy"
+	}
+	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+
+	ds := &DataStore{vault: vault}
+
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
 	if err != nil {
-		return
+		return nil, fmt.Errorf("postgres: %w", err)
 	}
-	var records []diskKeyRecord
-	if err := json.Unmarshal(raw, &records); err != nil {
-		return
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("postgres: %w", err)
 	}
-	for _, r := range records {
-		rec := r
-		ds.apiKeys[rec.ID] = &models.LLMAPIKey{
-			ID:           rec.ID,
-			CoachID:      rec.CoachID,
-			Provider:     rec.Provider,
-			EncryptedKey: rec.EncryptedKey,
-			Nonce:        rec.Nonce,
-			KeyHint:      rec.KeyHint,
-			IsPrimary:    rec.IsPrimary,
-			CreatedAt:    rec.CreatedAt,
-			UpdatedAt:    rec.UpdatedAt,
-		}
+	ds.pg = pool
+
+	// DefaultDocumentM makes nested documents decode as maps instead of
+	// ordered key/value lists, so a session serialises to the JSON it was saved as.
+	mopts := options.Client().ApplyURI(cfg.MongoURI).
+		SetBSONOptions(&options.BSONOptions{DefaultDocumentM: true})
+	mc, err := mongo.Connect(ctx, mopts)
+	if err != nil {
+		ds.Close()
+		return nil, fmt.Errorf("mongodb: %w", err)
 	}
-	if len(records) > 0 {
-		log.Printf("[store] Restored %d AES-256-GCM encrypted API key(s) from %s", len(records), ds.vaultFile)
+	ds.mongo = mc
+	if err := mc.Ping(ctx, nil); err != nil {
+		ds.Close()
+		return nil, fmt.Errorf("mongodb: %w", err)
+	}
+	ds.db = mc.Database(cfg.MongoDB)
+	if _, err := ds.db.Collection(sessionsCollection).Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "coachId", Value: 1}, {Key: "createdAt", Value: -1}},
+	}); err != nil {
+		ds.Close()
+		return nil, fmt.Errorf("mongodb index: %w", err)
+	}
+
+	ropts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		ds.Close()
+		return nil, fmt.Errorf("redis: %w", err)
+	}
+	ds.redis = redis.NewClient(ropts)
+	if err := ds.redis.Ping(ctx).Err(); err != nil {
+		ds.Close()
+		return nil, fmt.Errorf("redis: %w", err)
+	}
+	return ds, nil
+}
+
+// Close releases all connections.
+func (ds *DataStore) Close() {
+	if ds.pg != nil {
+		ds.pg.Close()
+	}
+	if ds.mongo != nil {
+		_ = ds.mongo.Disconnect(context.Background())
+	}
+	if ds.redis != nil {
+		_ = ds.redis.Close()
 	}
 }
 
-func (ds *DataStore) saveLocalVaultFileLocked() {
-	if ds.vaultFile == "" {
-		return
-	}
-	var records []diskKeyRecord
-	for _, k := range ds.apiKeys {
-		records = append(records, diskKeyRecord{
-			ID:           k.ID,
-			CoachID:      k.CoachID,
-			Provider:     k.Provider,
-			EncryptedKey: k.EncryptedKey,
-			Nonce:        k.Nonce,
-			KeyHint:      k.KeyHint,
-			IsPrimary:    k.IsPrimary,
-			CreatedAt:    k.CreatedAt,
-			UpdatedAt:    k.UpdatedAt,
-		})
-	}
-	if raw, err := json.MarshalIndent(records, "", "  "); err == nil {
-		_ = os.WriteFile(ds.vaultFile, raw, 0600)
+// Ping checks each database. The map always has the keys "postgres",
+// "mongodb" and "redis"; a nil value means the database answered.
+func (ds *DataStore) Ping(ctx context.Context) map[string]error {
+	return map[string]error{
+		"postgres": ds.pg.Ping(ctx),
+		"mongodb":  ds.mongo.Ping(ctx, nil),
+		"redis":    ds.redis.Ping(ctx).Err(),
 	}
 }
 
-func NewDataStore(ctx context.Context, vault *crypto.Vault, pgDSN, mongoURI, mongoDBName, redisURL string) *DataStore {
-	ds := &DataStore{
-		vault:        vault,
-		coaches:      make(map[string]*models.Coach),
-		coachesByEm:  make(map[string]string),
-		apiKeys:      make(map[string]*models.LLMAPIKey),
-		agentPrefs:   make(map[string]map[string]*models.AgentModelPref),
-		defaultPrefs: make(map[string]*models.AgentModelPref),
-		sessions:     make(map[string]map[string]interface{}),
-		sharedLinks:  make(map[string]*models.SharedLink),
-	}
-
-	ds.seedDefaultAgentPrefs()
-
-	// 1. Optional PostgreSQL connection
-	if pgDSN != "" {
-		pgCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-		if pool, err := pgxpool.New(pgCtx, pgDSN); err == nil {
-			if err := pool.Ping(pgCtx); err == nil {
-				ds.pgPool = pool
-				log.Println("[store] Connected to PostgreSQL")
-			} else {
-				log.Printf("[store] PostgreSQL ping failed (%v) — using resilient in-memory SQL fallback", err)
-				pool.Close()
-			}
-		}
-		if ds.pgPool == nil {
-			ds.vaultFile = ".coachbuddy_vault.json"
-			ds.loadLocalVaultFile()
-		}
-	}
-
-	// 2. Optional MongoDB connection
-	if mongoURI != "" {
-		mCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-		if client, err := mongo.Connect(mCtx, options.Client().ApplyURI(mongoURI)); err == nil {
-			if err := client.Ping(mCtx, nil); err == nil {
-				ds.mongoClient = client
-				if mongoDBName == "" {
-					mongoDBName = "coachbuddy"
-				}
-				ds.mongoDB = client.Database(mongoDBName)
-				log.Println("[store] Connected to MongoDB")
-				_, _ = ds.mongoDB.Collection("wod_sessions").Indexes().CreateOne(mCtx, mongo.IndexModel{
-					Keys: bson.D{{Key: "coachId", Value: 1}, {Key: "createdAt", Value: -1}},
-				})
-			} else {
-				log.Printf("[store] MongoDB ping failed (%v) — using resilient in-memory document fallback", err)
-			}
-		}
-	}
-
-	// 3. Optional Redis connection
-	if redisURL != "" {
-		if opt, err := redis.ParseURL(redisURL); err == nil {
-			rc := redis.NewClient(opt)
-			rCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			defer cancel()
-			if err := rc.Ping(rCtx).Err(); err == nil {
-				ds.redisClient = rc
-				log.Println("[store] Connected to Redis Pub/Sub & Cache")
-			} else {
-				log.Printf("[store] Redis ping failed (%v) — SSE will use direct stream fallback", err)
-			}
-		}
-	}
-
-	return ds
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-func (ds *DataStore) Redis() *redis.Client {
-	return ds.redisClient
+func isInvalidUUID(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "22P02"
 }
 
-// seedDefaultAgentPrefs sets the model routing used for any coach who has not chosen their own.
-// It seeds no coach accounts and no sample sessions.
-func (ds *DataStore) seedDefaultAgentPrefs() {
-	for _, role := range []string{"global", "parser", "warmup", "scaling", "timeline"} {
-		ds.defaultPrefs[role] = &models.AgentModelPref{
-			ID:              "default-" + role,
-			AgentRole:       role,
-			Provider:        "gemini",
-			ModelIdentifier: "gemini/gemini-3.8-flash",
-			UpdatedAt:       time.Now(),
-		}
-	}
-}
-
-// --- Coach Auth Methods ---
+// --- Coaches ---
 
 func (ds *DataStore) CreateCoach(ctx context.Context, email, password, displayName, boxName string, defaultDuration int) (*models.Coach, error) {
 	emailClean := strings.ToLower(strings.TrimSpace(email))
 	if emailClean == "" || password == "" {
-		return nil, errors.New("email and password are required")
+		return nil, fmt.Errorf("%w: email and password are required", ErrInvalidInput)
 	}
 	if defaultDuration <= 0 {
 		defaultDuration = 60
@@ -218,123 +182,79 @@ func (ds *DataStore) CreateCoach(ctx context.Context, email, password, displayNa
 	if err != nil {
 		return nil, err
 	}
-
-	coach := &models.Coach{
-		ID:                      uuid.NewString(),
+	c := &models.Coach{
 		Email:                   emailClean,
 		PasswordHash:            hash,
 		DisplayName:             displayName,
 		BoxName:                 boxName,
 		DefaultClassDurationMin: defaultDuration,
-		CreatedAt:               time.Now(),
 	}
+	err = ds.pg.QueryRow(ctx, `
+		INSERT INTO coaches (id, email, password_hash, display_name, box_name, default_class_duration_min)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at
+	`, uuid.NewString(), c.Email, c.PasswordHash, c.DisplayName, c.BoxName, c.DefaultClassDurationMin).Scan(&c.ID, &c.CreatedAt)
+	if isUniqueViolation(err) {
+		return nil, ErrEmailTaken
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create coach: %w", err)
+	}
+	return c, nil
+}
 
-	if ds.pgPool != nil {
-		err := ds.pgPool.QueryRow(ctx, `
-			INSERT INTO coaches (id, email, password_hash, display_name, box_name, default_class_duration_min)
-			VALUES ($1, $2, $3, $4, $5, $6)
-			RETURNING id, created_at
-		`, coach.ID, coach.Email, coach.PasswordHash, coach.DisplayName, coach.BoxName, coach.DefaultClassDurationMin).Scan(&coach.ID, &coach.CreatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("email already registered or DB error: %w", err)
-		}
-	}
+const coachColumns = `id, email, password_hash, display_name, COALESCE(box_name, ''), default_class_duration_min, created_at`
 
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	if _, exists := ds.coachesByEm[emailClean]; exists && ds.pgPool == nil {
-		return nil, errors.New("email already registered")
-	}
-	ds.coaches[coach.ID] = coach
-	ds.coachesByEm[emailClean] = coach.ID
-	return coach, nil
+func scanCoach(row pgx.Row) (*models.Coach, error) {
+	var c models.Coach
+	err := row.Scan(&c.ID, &c.Email, &c.PasswordHash, &c.DisplayName, &c.BoxName, &c.DefaultClassDurationMin, &c.CreatedAt)
+	return &c, err
 }
 
 func (ds *DataStore) AuthenticateCoach(ctx context.Context, email, password string) (*models.Coach, error) {
 	emailClean := strings.ToLower(strings.TrimSpace(email))
-	if ds.pgPool != nil {
-		var c models.Coach
-		err := ds.pgPool.QueryRow(ctx, `
-			SELECT id, email, password_hash, display_name, box_name, default_class_duration_min, created_at
-			FROM coaches WHERE LOWER(email) = $1
-		`, emailClean).Scan(&c.ID, &c.Email, &c.PasswordHash, &c.DisplayName, &c.BoxName, &c.DefaultClassDurationMin, &c.CreatedAt)
-		if err == nil {
-			if !auth.CheckPassword(c.PasswordHash, password) {
-				return nil, errors.New("invalid credentials")
-			}
-			return &c, nil
-		}
+	c, err := scanCoach(ds.pg.QueryRow(ctx, `SELECT `+coachColumns+` FROM coaches WHERE LOWER(email) = $1`, emailClean))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrInvalidCredentials
 	}
-
-	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-	id, ok := ds.coachesByEm[emailClean]
-	if !ok {
-		return nil, errors.New("invalid credentials")
+	if err != nil {
+		return nil, fmt.Errorf("authenticate coach: %w", err)
 	}
-	c := ds.coaches[id]
 	if !auth.CheckPassword(c.PasswordHash, password) {
-		return nil, errors.New("invalid credentials")
+		return nil, ErrInvalidCredentials
 	}
 	return c, nil
 }
 
 func (ds *DataStore) GetCoach(ctx context.Context, coachID string) (*models.Coach, error) {
-	if ds.pgPool != nil {
-		var c models.Coach
-		err := ds.pgPool.QueryRow(ctx, `
-			SELECT id, email, password_hash, display_name, box_name, default_class_duration_min, created_at
-			FROM coaches WHERE id = $1
-		`, coachID).Scan(&c.ID, &c.Email, &c.PasswordHash, &c.DisplayName, &c.BoxName, &c.DefaultClassDurationMin, &c.CreatedAt)
-		if err == nil {
-			return &c, nil
-		}
+	c, err := scanCoach(ds.pg.QueryRow(ctx, `SELECT `+coachColumns+` FROM coaches WHERE id = $1`, coachID))
+	if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
+		return nil, ErrCoachNotFound
 	}
-
-	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-	if c, ok := ds.coaches[coachID]; ok {
-		return c, nil
+	if err != nil {
+		return nil, fmt.Errorf("get coach: %w", err)
 	}
-	return nil, ErrCoachNotFound
+	return c, nil
 }
 
 func (ds *DataStore) UpdateCoachProfile(ctx context.Context, coachID, displayName, boxName string, defaultDuration int) (*models.Coach, error) {
 	if defaultDuration <= 0 {
 		defaultDuration = 60
 	}
-	if ds.pgPool != nil {
-		tag, err := ds.pgPool.Exec(ctx, `
-			UPDATE coaches SET display_name = $2, box_name = $3, default_class_duration_min = $4, updated_at = NOW()
-			WHERE id = $1
-		`, coachID, displayName, boxName, defaultDuration)
-		if err != nil {
-			return nil, err
-		}
-		if tag.RowsAffected() == 0 {
-			return nil, ErrCoachNotFound
-		}
-		ds.mu.Lock()
-		if c, ok := ds.coaches[coachID]; ok {
-			c.DisplayName, c.BoxName, c.DefaultClassDurationMin = displayName, boxName, defaultDuration
-		}
-		ds.mu.Unlock()
-		return ds.GetCoach(ctx, coachID)
-	}
-
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	c, ok := ds.coaches[coachID]
-	if !ok {
+	c, err := scanCoach(ds.pg.QueryRow(ctx, `
+		UPDATE coaches SET display_name = $2, box_name = $3, default_class_duration_min = $4, updated_at = NOW()
+		WHERE id = $1
+		RETURNING `+coachColumns, coachID, displayName, boxName, defaultDuration))
+	if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 		return nil, ErrCoachNotFound
 	}
-	c.DisplayName = displayName
-	c.BoxName = boxName
-	c.DefaultClassDurationMin = defaultDuration
+	if err != nil {
+		return nil, fmt.Errorf("update coach: %w", err)
+	}
 	return c, nil
 }
 
-// --- BYOK Encrypted API Key Vault Methods ---
+// --- BYOK encrypted API keys ---
 
 func (ds *DataStore) SaveAPIKey(ctx context.Context, coachID, provider, rawKey string, isPrimary bool) (*models.LLMAPIKey, error) {
 	cleanProvider := strings.ToLower(strings.TrimSpace(provider))
@@ -342,196 +262,192 @@ func (ds *DataStore) SaveAPIKey(ctx context.Context, coachID, provider, rawKey s
 	if err != nil {
 		return nil, err
 	}
-	hint := crypto.MaskKey(rawKey)
-
-	keyRec := &models.LLMAPIKey{
-		ID:           uuid.NewString(),
+	k := &models.LLMAPIKey{
 		CoachID:      coachID,
 		Provider:     cleanProvider,
 		EncryptedKey: ciphertext,
 		Nonce:        nonce,
-		KeyHint:      hint,
+		KeyHint:      crypto.MaskKey(rawKey),
 		IsPrimary:    isPrimary,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
 	}
 
-	if ds.pgPool != nil {
+	err = pgx.BeginFunc(ctx, ds.pg, func(tx pgx.Tx) error {
 		if isPrimary {
-			_, _ = ds.pgPool.Exec(ctx, `UPDATE llm_api_keys SET is_primary = FALSE WHERE coach_id = $1`, coachID)
+			if _, err := tx.Exec(ctx, `UPDATE llm_api_keys SET is_primary = FALSE WHERE coach_id = $1`, coachID); err != nil {
+				return err
+			}
 		}
-		_, err := ds.pgPool.Exec(ctx, `
+		return tx.QueryRow(ctx, `
 			INSERT INTO llm_api_keys (id, coach_id, provider, encrypted_key, nonce, key_hint, is_primary)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (coach_id, provider)
-			DO UPDATE SET encrypted_key = EXCLUDED.encrypted_key, nonce = EXCLUDED.nonce, key_hint = EXCLUDED.key_hint, is_primary = EXCLUDED.is_primary, updated_at = NOW()
-		`, keyRec.ID, keyRec.CoachID, keyRec.Provider, keyRec.EncryptedKey, keyRec.Nonce, keyRec.KeyHint, keyRec.IsPrimary)
-		if err != nil {
-			log.Printf("[store] PG SaveAPIKey warning: %v", err)
-		}
+			DO UPDATE SET encrypted_key = EXCLUDED.encrypted_key, nonce = EXCLUDED.nonce, key_hint = EXCLUDED.key_hint,
+			              is_primary = EXCLUDED.is_primary, updated_at = NOW()
+			RETURNING id, created_at, updated_at
+		`, uuid.NewString(), k.CoachID, k.Provider, k.EncryptedKey, k.Nonce, k.KeyHint, k.IsPrimary).Scan(&k.ID, &k.CreatedAt, &k.UpdatedAt)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("save api key: %w", err)
 	}
-
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	if isPrimary {
-		for _, k := range ds.apiKeys {
-			if k.CoachID == coachID {
-				k.IsPrimary = false
-			}
-		}
-	}
-	ds.apiKeys[keyRec.ID] = keyRec
-	ds.saveLocalVaultFileLocked()
-	return keyRec, nil
+	return k, nil
 }
 
 func (ds *DataStore) ListAPIKeys(ctx context.Context, coachID string) ([]*models.LLMAPIKey, error) {
-	if ds.pgPool != nil {
-		rows, err := ds.pgPool.Query(ctx, `
-			SELECT id, coach_id, provider, encrypted_key, nonce, key_hint, is_primary, created_at, updated_at
-			FROM llm_api_keys WHERE coach_id = $1 ORDER BY created_at DESC
-		`, coachID)
-		if err == nil {
-			defer rows.Close()
-			var list []*models.LLMAPIKey
-			for rows.Next() {
-				var k models.LLMAPIKey
-				if err := rows.Scan(&k.ID, &k.CoachID, &k.Provider, &k.EncryptedKey, &k.Nonce, &k.KeyHint, &k.IsPrimary, &k.CreatedAt, &k.UpdatedAt); err == nil {
-					list = append(list, &k)
-				}
-			}
-			if len(list) > 0 {
-				return list, nil
-			}
-		}
+	rows, err := ds.pg.Query(ctx, `
+		SELECT id, coach_id, provider, encrypted_key, nonce, key_hint, is_primary, created_at, updated_at
+		FROM llm_api_keys WHERE coach_id = $1 ORDER BY created_at DESC
+	`, coachID)
+	if err != nil {
+		return nil, fmt.Errorf("list api keys: %w", err)
 	}
-
-	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-	var res []*models.LLMAPIKey
-	for _, k := range ds.apiKeys {
-		if k.CoachID == coachID {
-			res = append(res, k)
-		}
-	}
-	sort.Slice(res, func(i, j int) bool {
-		return res[i].CreatedAt.After(res[j].CreatedAt)
+	list, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*models.LLMAPIKey, error) {
+		var k models.LLMAPIKey
+		err := row.Scan(&k.ID, &k.CoachID, &k.Provider, &k.EncryptedKey, &k.Nonce, &k.KeyHint, &k.IsPrimary, &k.CreatedAt, &k.UpdatedAt)
+		return &k, err
 	})
-	return res, nil
+	if err != nil {
+		return nil, fmt.Errorf("list api keys: %w", err)
+	}
+	return list, nil
 }
 
+// DeleteAPIKey deletes a key only if it belongs to the coach.
 func (ds *DataStore) DeleteAPIKey(ctx context.Context, coachID, keyID string) error {
-	if ds.pgPool != nil {
-		_, _ = ds.pgPool.Exec(ctx, `DELETE FROM llm_api_keys WHERE id = $1 AND coach_id = $2`, keyID, coachID)
+	tag, err := ds.pg.Exec(ctx, `DELETE FROM llm_api_keys WHERE id = $1 AND coach_id = $2`, keyID, coachID)
+	if isInvalidUUID(err) {
+		return ErrKeyNotFound
 	}
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	delete(ds.apiKeys, keyID)
-	ds.saveLocalVaultFileLocked()
+	if err != nil {
+		return fmt.Errorf("delete api key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrKeyNotFound
+	}
 	return nil
 }
 
-// --- Per-Agent Model Routing Preferences ---
+// --- Per-agent model routing ---
 
-func (ds *DataStore) GetAgentPrefs(ctx context.Context, coachID string) ([]*models.AgentModelPref, error) {
-	if ds.pgPool != nil {
-		rows, err := ds.pgPool.Query(ctx, `
-			SELECT id, coach_id, agent_role, provider, model_identifier, updated_at
-			FROM agent_model_prefs WHERE coach_id = $1
-		`, coachID)
-		if err == nil {
-			defer rows.Close()
-			var list []*models.AgentModelPref
-			for rows.Next() {
-				var p models.AgentModelPref
-				if err := rows.Scan(&p.ID, &p.CoachID, &p.AgentRole, &p.Provider, &p.ModelIdentifier, &p.UpdatedAt); err == nil {
-					list = append(list, &p)
-				}
-			}
-			if len(list) > 0 {
-				return list, nil
-			}
+// DefaultModel is the model used when a coach has not chosen one for a role.
+// The model list moves to configuration in Phase 2 step 8.
+const DefaultModel = "gemini/gemini-3.8-flash"
+
+// defaultAgentPrefs is the routing for a coach who has not saved their own.
+func defaultAgentPrefs() []*models.AgentModelPref {
+	out := make([]*models.AgentModelPref, 0, len(AgentRoles))
+	for _, role := range AgentRoles {
+		out = append(out, &models.AgentModelPref{
+			ID:              "default-" + role,
+			AgentRole:       role,
+			Provider:        "gemini",
+			ModelIdentifier: DefaultModel,
+		})
+	}
+	return out
+}
+
+func validRole(role string) bool {
+	for _, r := range AgentRoles {
+		if r == role {
+			return true
 		}
 	}
+	return false
+}
 
-	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-	roleMap, ok := ds.agentPrefs[coachID]
-	if !ok {
-		roleMap = ds.defaultPrefs
+// GetAgentPrefs returns the coach's saved routing, or the defaults when the
+// coach has saved none.
+func (ds *DataStore) GetAgentPrefs(ctx context.Context, coachID string) ([]*models.AgentModelPref, error) {
+	rows, err := ds.pg.Query(ctx, `
+		SELECT id, coach_id, agent_role, provider, model_identifier, updated_at
+		FROM agent_model_prefs WHERE coach_id = $1
+	`, coachID)
+	if err != nil {
+		return nil, fmt.Errorf("get agent prefs: %w", err)
 	}
-	var out []*models.AgentModelPref
-	order := []string{"global", "parser", "warmup", "scaling", "timeline"}
-	for _, r := range order {
-		if p, exists := roleMap[r]; exists {
+	list, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*models.AgentModelPref, error) {
+		var p models.AgentModelPref
+		err := row.Scan(&p.ID, &p.CoachID, &p.AgentRole, &p.Provider, &p.ModelIdentifier, &p.UpdatedAt)
+		return &p, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get agent prefs: %w", err)
+	}
+	if len(list) == 0 {
+		return defaultAgentPrefs(), nil
+	}
+	return orderPrefs(list), nil
+}
+
+func orderPrefs(list []*models.AgentModelPref) []*models.AgentModelPref {
+	byRole := make(map[string]*models.AgentModelPref, len(list))
+	for _, p := range list {
+		byRole[p.AgentRole] = p
+	}
+	out := make([]*models.AgentModelPref, 0, len(list))
+	for _, r := range AgentRoles {
+		if p, ok := byRole[r]; ok {
 			out = append(out, p)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func (ds *DataStore) SaveAgentPrefs(ctx context.Context, coachID string, prefs []models.AgentModelPref) ([]*models.AgentModelPref, error) {
-	ds.mu.Lock()
-	if _, ok := ds.agentPrefs[coachID]; !ok {
-		ds.agentPrefs[coachID] = make(map[string]*models.AgentModelPref)
-	}
 	for _, p := range prefs {
-		cp := p
-		if cp.ID == "" {
-			cp.ID = uuid.NewString()
+		if !validRole(p.AgentRole) {
+			return nil, fmt.Errorf("%w: unknown agent role %q", ErrInvalidInput, p.AgentRole)
 		}
-		cp.CoachID = coachID
-		cp.UpdatedAt = time.Now()
-		ds.agentPrefs[coachID][cp.AgentRole] = &cp
-
-		if ds.pgPool != nil {
-			_, _ = ds.pgPool.Exec(ctx, `
+	}
+	err := pgx.BeginFunc(ctx, ds.pg, func(tx pgx.Tx) error {
+		for _, p := range prefs {
+			if _, err := tx.Exec(ctx, `
 				INSERT INTO agent_model_prefs (id, coach_id, agent_role, provider, model_identifier, updated_at)
 				VALUES ($1, $2, $3, $4, $5, NOW())
 				ON CONFLICT (coach_id, agent_role)
 				DO UPDATE SET provider = EXCLUDED.provider, model_identifier = EXCLUDED.model_identifier, updated_at = NOW()
-			`, cp.ID, coachID, cp.AgentRole, cp.Provider, cp.ModelIdentifier)
+			`, uuid.NewString(), coachID, p.AgentRole, p.Provider, p.ModelIdentifier); err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("save agent prefs: %w", err)
 	}
-	ds.mu.Unlock()
 	return ds.GetAgentPrefs(ctx, coachID)
 }
 
-// BuildEphemeralRoutingConfig decrypts the coach's AES-256-GCM keys in-memory for a single agent run.
+// BuildEphemeralRoutingConfig decrypts the coach's keys in memory for a single agent run.
 func (ds *DataStore) BuildEphemeralRoutingConfig(ctx context.Context, coachID string) (map[string]models.EphemeralAgentRoute, error) {
-	keys, _ := ds.ListAPIKeys(ctx, coachID)
-	prefs, _ := ds.GetAgentPrefs(ctx, coachID)
+	keys, err := ds.ListAPIKeys(ctx, coachID)
+	if err != nil {
+		return nil, err
+	}
+	prefs, err := ds.GetAgentPrefs(ctx, coachID)
+	if err != nil {
+		return nil, err
+	}
+	return buildRoutes(ds.vault, coachID, keys, prefs)
+}
 
-	// =========================================================================
-	// TODO(engineer) 2.2: Ephemeral Routing Config Key Decryption & Fallback
-	//
-	// Invariants to enforce:
-	// 1. Decrypt each key with:
-	//    `plain, err := ds.vault.Decrypt(coachID, k.Provider, k.EncryptedKey, k.Nonce)`
-	//    Store in `decryptedByProvider[k.Provider] = plain`.
-	//    Track `primaryKey` and `primaryProvider` (from `k.IsPrimary == true`, or first decrypted key).
-	// 2. If no keys could be decrypted (or keys is empty):
-	//    Return nil, fmt.Errorf("no valid LLM API keys configured for coach %s", coachID)
-	// 3. For each role in ["global", "parser", "warmup", "scaling", "timeline"]:
-	//    - Check if coach configured a specific pref for that role.
-	//    - If pref specified provider, use `decryptedByProvider[pref.Provider]`, falling back to `primaryKey`.
-	//    - If no key could be resolved for a role, return nil, fmt.Errorf("missing key for provider %s", targetProvider)
-	// =========================================================================
+// buildRoutes resolves a provider, key and model for every agent role.
+// A role whose chosen provider has no key uses the primary key and the
+// primary provider's model.
+func buildRoutes(vault *crypto.Vault, coachID string, keys []*models.LLMAPIKey, prefs []*models.AgentModelPref) (map[string]models.EphemeralAgentRoute, error) {
 	decryptedByProvider := make(map[string]string)
 	var primaryProvider, primaryKey string
-
 	for _, k := range keys {
-		plain, err := ds.vault.Decrypt(coachID, k.Provider, k.EncryptedKey, k.Nonce)
+		plain, err := vault.Decrypt(coachID, k.Provider, k.EncryptedKey, k.Nonce)
 		if err != nil || plain == "" {
 			continue
 		}
 		decryptedByProvider[k.Provider] = plain
-		if primaryKey == "" || k.IsPrimary == true {
+		if primaryKey == "" || k.IsPrimary {
 			primaryKey = plain
 			primaryProvider = k.Provider
 		}
 	}
-
 	if primaryKey == "" {
 		return nil, fmt.Errorf("no valid LLM API keys configured for coach %s", coachID)
 	}
@@ -541,219 +457,216 @@ func (ds *DataStore) BuildEphemeralRoutingConfig(ctx context.Context, coachID st
 		prefByRole[p.AgentRole] = p
 	}
 
-	ephemeralRoutes := make(map[string]models.EphemeralAgentRoute)
-
-	roles := []string{"global", "parser", "warmup", "scaling", "timeline"}
-	for _, role := range roles {
-		pref, prefExists := prefByRole[role]
-		providerToUse := primaryProvider
-		modelToUse := "gemini/gemini-3.8-flash"
-		if prefExists && pref.Provider != "" {
-			providerToUse = pref.Provider
-			modelToUse = pref.ModelIdentifier
+	routes := make(map[string]models.EphemeralAgentRoute, len(AgentRoles))
+	for _, role := range AgentRoles {
+		provider := primaryProvider
+		model := DefaultModel
+		if p, ok := prefByRole[role]; ok && p.Provider != "" {
+			provider = p.Provider
+			model = p.ModelIdentifier
 		}
-
-		keyToUse, hasKey := decryptedByProvider[providerToUse]
-		if !hasKey {
-			providerToUse = primaryProvider
-			keyToUse = primaryKey
-			if globalPref, ok := prefByRole["global"]; ok && globalPref.Provider == primaryProvider && globalPref.ModelIdentifier != "" {
-				modelToUse = globalPref.ModelIdentifier
+		key, ok := decryptedByProvider[provider]
+		if !ok {
+			provider, key = primaryProvider, primaryKey
+			if g, ok := prefByRole["global"]; ok && g.Provider == primaryProvider && g.ModelIdentifier != "" {
+				model = g.ModelIdentifier
 			} else {
-				switch primaryProvider {
-				case "openai":
-					modelToUse = "openai/gpt-4o"
-				case "anthropic":
-					modelToUse = "anthropic/claude-3-7-sonnet-latest"
-				case "groq":
-					modelToUse = "groq/llama-3.3-70b-versatile"
-				default:
-					modelToUse = "gemini/gemini-3.8-flash"
-				}
+				model = defaultModelFor(primaryProvider)
 			}
 		}
-
-		ephemeralRoutes[role] = models.EphemeralAgentRoute{
-			Provider: providerToUse,
-			APIKey:   keyToUse,
-			Model:    modelToUse,
-		}
-
+		routes[role] = models.EphemeralAgentRoute{Provider: provider, APIKey: key, Model: model}
 	}
-	return ephemeralRoutes, nil
+	return routes, nil
 }
 
-// --- WOD Session Document Store (MongoDB + In-Memory Sync) ---
+func defaultModelFor(provider string) string {
+	switch provider {
+	case "openai":
+		return "openai/gpt-4o"
+	case "anthropic":
+		return "anthropic/claude-3-7-sonnet-latest"
+	case "groq":
+		return "groq/llama-3.3-70b-versatile"
+	default:
+		return DefaultModel
+	}
+}
+
+// --- WOD session documents (MongoDB) ---
 
 func (ds *DataStore) SaveSession(ctx context.Context, sessionID string, doc map[string]interface{}) error {
 	doc["_id"] = sessionID
 	doc["sessionId"] = sessionID
-
-	if ds.mongoDB != nil {
-		coll := ds.mongoDB.Collection("wod_sessions")
-		opts := options.Replace().SetUpsert(true)
-		_, err := coll.ReplaceOne(ctx, bson.M{"_id": sessionID}, doc, opts)
-		if err != nil {
-			log.Printf("[store] MongoDB ReplaceOne warning: %v", err)
-		}
+	_, err := ds.db.Collection(sessionsCollection).ReplaceOne(ctx, bson.M{"_id": sessionID}, doc, options.Replace().SetUpsert(true))
+	if err != nil {
+		return fmt.Errorf("save session: %w", err)
 	}
-
-	// Deep copy via JSON into in-memory map
-	raw, _ := json.Marshal(doc)
-	var copyDoc map[string]interface{}
-	_ = json.Unmarshal(raw, &copyDoc)
-
-	ds.mu.Lock()
-	ds.sessions[sessionID] = copyDoc
-	ds.mu.Unlock()
 	return nil
 }
 
 func (ds *DataStore) GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error) {
-	if ds.mongoDB != nil {
-		coll := ds.mongoDB.Collection("wod_sessions")
-		var res map[string]interface{}
-		if err := coll.FindOne(ctx, bson.M{"_id": sessionID}).Decode(&res); err == nil {
-			res["sessionId"] = sessionID
-			return res, nil
-		}
+	var doc map[string]interface{}
+	err := ds.db.Collection(sessionsCollection).FindOne(ctx, bson.M{"_id": sessionID}).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrSessionNotFound
 	}
-
-	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-	if doc, ok := ds.sessions[sessionID]; ok {
-		return doc, nil
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
 	}
-	return nil, errors.New("session not found")
+	doc = plainDoc(doc)
+	doc["sessionId"] = sessionID
+	return doc, nil
 }
 
+// ListSessions returns the coach's sessions, newest first, without the
+// uploaded screenshot (it can be several megabytes per session).
 func (ds *DataStore) ListSessions(ctx context.Context, coachID string) ([]map[string]interface{}, error) {
-	ds.mu.RLock()
-	var list []map[string]interface{}
-	seen := make(map[string]bool)
-	for id, doc := range ds.sessions {
-		if fmt.Sprintf("%v", doc["coachId"]) == coachID {
-			seen[id] = true
-			list = append(list, doc)
-		}
+	opts := options.Find().
+		SetSort(bson.D{{Key: "createdAt", Value: -1}}).
+		SetProjection(bson.M{"input.imageBase64": 0})
+	cur, err := ds.db.Collection(sessionsCollection).Find(ctx, bson.M{"coachId": coachID}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
 	}
-	ds.mu.RUnlock()
-
-	if ds.mongoDB != nil {
-		coll := ds.mongoDB.Collection("wod_sessions")
-		cur, err := coll.Find(ctx, bson.M{"coachId": coachID})
-		if err == nil {
-			defer cur.Close(ctx)
-			for cur.Next(ctx) {
-				var m map[string]interface{}
-				if err := cur.Decode(&m); err == nil {
-					idStr := fmt.Sprintf("%v", m["_id"])
-					m["sessionId"] = idStr
-					if !seen[idStr] {
-						seen[idStr] = true
-						list = append(list, m)
-					} else {
-						// Replace with latest from Mongo
-						for idx, existing := range list {
-							if fmt.Sprintf("%v", existing["sessionId"]) == idStr {
-								list[idx] = m
-								break
-							}
-						}
-					}
-				}
-			}
-		}
+	list := []map[string]interface{}{}
+	if err := cur.All(ctx, &list); err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
 	}
-
-	// Strip heavy imageBase64 from list view to avoid massive network transfers
-	for _, item := range list {
-		if input, ok := item["input"].(map[string]interface{}); ok {
-			delete(input, "imageBase64")
-		}
+	for i, m := range list {
+		list[i] = plainDoc(m)
+		list[i]["sessionId"] = fmt.Sprintf("%v", m["_id"])
 	}
-
-	sort.Slice(list, func(i, j int) bool {
-		ti := fmt.Sprintf("%v", list[i]["createdAt"])
-		tj := fmt.Sprintf("%v", list[j]["createdAt"])
-		return ti > tj
-	})
 	return list, nil
 }
 
 func (ds *DataStore) DeleteSession(ctx context.Context, sessionID string) error {
-	if ds.mongoDB != nil {
-		_, _ = ds.mongoDB.Collection("wod_sessions").DeleteOne(ctx, bson.M{"_id": sessionID})
+	res, err := ds.db.Collection(sessionsCollection).DeleteOne(ctx, bson.M{"_id": sessionID})
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
 	}
-	ds.mu.Lock()
-	delete(ds.sessions, sessionID)
-	ds.mu.Unlock()
+	if res.DeletedCount == 0 {
+		return ErrSessionNotFound
+	}
 	return nil
 }
 
-// --- Shared Links & QR Codes ---
+// plainDoc converts MongoDB's primitive.M and primitive.A, at any depth, to
+// map[string]interface{} and []interface{}, the types the handlers assert on.
+func plainDoc(doc map[string]interface{}) map[string]interface{} {
+	out, _ := plainValue(doc).(map[string]interface{})
+	return out
+}
+
+func plainValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case primitive.M:
+		return plainValue(map[string]interface{}(t))
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, x := range t {
+			out[k] = plainValue(x)
+		}
+		return out
+	case primitive.A:
+		return plainValue([]interface{}(t))
+	case []interface{}:
+		out := make([]interface{}, len(t))
+		for i, x := range t {
+			out[i] = plainValue(x)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+// --- Share links (PostgreSQL) ---
 
 func (ds *DataStore) SaveSharedLink(ctx context.Context, link *models.SharedLink) error {
-	if ds.pgPool != nil {
-		_, _ = ds.pgPool.Exec(ctx, `
-			INSERT INTO shared_links (short_code, mongo_session_id, coach_id, include_coach_notes, qr_svg, expires_at, view_count)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (short_code) DO UPDATE SET qr_svg = EXCLUDED.qr_svg, include_coach_notes = EXCLUDED.include_coach_notes, expires_at = EXCLUDED.expires_at
-		`, link.ShortCode, link.MongoSessionID, link.CoachID, link.IncludeCoachNotes, link.QRSVG, link.ExpiresAt, link.ViewCount)
+	err := ds.pg.QueryRow(ctx, `
+		INSERT INTO shared_links (short_code, mongo_session_id, coach_id, include_coach_notes, qr_svg, expires_at, view_count)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING created_at
+	`, link.ShortCode, link.MongoSessionID, link.CoachID, link.IncludeCoachNotes, link.QRSVG, link.ExpiresAt, link.ViewCount).Scan(&link.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("save shared link: %w", err)
 	}
-	if ds.redisClient != nil {
-		data, _ := json.Marshal(link)
-		ttl := 24 * time.Hour
-		if link.ExpiresAt != nil {
-			rem := time.Until(*link.ExpiresAt)
-			if rem > 0 {
-				ttl = rem
-			}
-		}
-		_ = ds.redisClient.Set(ctx, "share:"+link.ShortCode, data, ttl).Err()
-	}
-	ds.mu.Lock()
-	ds.sharedLinks[link.ShortCode] = link
-	ds.mu.Unlock()
 	return nil
 }
 
+// GetSharedLink resolves a share code and counts the view. An unknown or
+// expired code returns ErrLinkNotFound.
 func (ds *DataStore) GetSharedLink(ctx context.Context, code string) (*models.SharedLink, error) {
-	if ds.redisClient != nil {
-		if val, err := ds.redisClient.Get(ctx, "share:"+code).Result(); err == nil && val != "" {
-			var link models.SharedLink
-			if err := json.Unmarshal([]byte(val), &link); err == nil {
-				if link.ExpiresAt != nil && time.Now().After(*link.ExpiresAt) {
-					return nil, errors.New("shared link expired")
-				}
-				return &link, nil
-			}
-		}
+	var link models.SharedLink
+	err := ds.pg.QueryRow(ctx, `
+		UPDATE shared_links SET view_count = view_count + 1
+		WHERE short_code = $1 AND (expires_at IS NULL OR expires_at > NOW())
+		RETURNING short_code, mongo_session_id, coach_id, include_coach_notes, COALESCE(qr_svg, ''), expires_at, view_count, created_at
+	`, code).Scan(&link.ShortCode, &link.MongoSessionID, &link.CoachID, &link.IncludeCoachNotes, &link.QRSVG, &link.ExpiresAt, &link.ViewCount, &link.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrLinkNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get shared link: %w", err)
+	}
+	return &link, nil
+}
+
+// --- Session progress events (Redis) ---
+
+// EventStream is the progress of one session: the events already published,
+// then the live ones. Close must be called when the reader is done.
+type EventStream struct {
+	Buffered []string
+	Live     <-chan string
+	Close    func()
+}
+
+// SessionEvents subscribes to a session's live events and then reads the
+// buffered ones, so no event published in between is lost. A live event that
+// was also in the buffer is dropped.
+func (ds *DataStore) SessionEvents(ctx context.Context, sessionID string) (*EventStream, error) {
+	pubsub := ds.redis.Subscribe(ctx, eventsChannel+sessionID)
+	if _, err := pubsub.Receive(ctx); err != nil {
+		_ = pubsub.Close()
+		return nil, fmt.Errorf("subscribe session events: %w", err)
+	}
+	buffered, err := ds.redis.LRange(ctx, eventsBuffer+sessionID, 0, -1).Result()
+	if err != nil {
+		_ = pubsub.Close()
+		return nil, fmt.Errorf("read buffered session events: %w", err)
+	}
+	seen := make(map[string]bool, len(buffered))
+	for _, e := range buffered {
+		seen[e] = true
 	}
 
-	if ds.pgPool != nil {
-		var link models.SharedLink
-		err := ds.pgPool.QueryRow(ctx, `
-			UPDATE shared_links SET view_count = view_count + 1
-			WHERE short_code = $1
-			RETURNING short_code, mongo_session_id, coach_id, include_coach_notes, COALESCE(qr_svg, ''), expires_at, view_count, created_at
-		`, code).Scan(&link.ShortCode, &link.MongoSessionID, &link.CoachID, &link.IncludeCoachNotes, &link.QRSVG, &link.ExpiresAt, &link.ViewCount, &link.CreatedAt)
-		if err == nil {
-			if link.ExpiresAt != nil && time.Now().After(*link.ExpiresAt) {
-				return nil, errors.New("shared link expired")
+	live := make(chan string)
+	done := make(chan struct{})
+	go func() {
+		defer close(live)
+		for msg := range pubsub.Channel() {
+			if seen[msg.Payload] {
+				continue
 			}
-			return &link, nil
+			select {
+			case live <- msg.Payload:
+			case <-done:
+				return
+			}
 		}
-	}
-
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	if link, ok := ds.sharedLinks[code]; ok {
-		if link.ExpiresAt != nil && time.Now().After(*link.ExpiresAt) {
-			return nil, errors.New("shared link expired")
-		}
-		link.ViewCount++
-		return link, nil
-	}
-	return nil, errors.New("shared link not found")
+	}()
+	closed := false
+	return &EventStream{
+		Buffered: buffered,
+		Live:     live,
+		Close: func() {
+			if closed {
+				return
+			}
+			closed = true
+			close(done)
+			_ = pubsub.Close()
+		},
+	}, nil
 }

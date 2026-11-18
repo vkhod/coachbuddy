@@ -19,6 +19,35 @@ jobs:
   gateway-go:
     name: gateway-go (Go)
     runs-on: ubuntu-latest
+    # Real databases for internal/store/integration_test.go. Throwaway
+    # credentials, only reachable from this job.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: coachbuddy
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d coachbuddy"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      mongodb:
+        image: mongo:7
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      GATEWAY_TEST_POSTGRES_DSN: postgres://ci:ci@localhost:5432/coachbuddy?sslmode=disable
+      GATEWAY_TEST_MONGO_URI: mongodb://localhost:27017
+      GATEWAY_TEST_REDIS_URL: redis://localhost:6379/0
     defaults:
       run:
         working-directory: services/gateway-go
@@ -31,7 +60,7 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test -race ./...
 
   agents-python:
     name: agents-python (Python)

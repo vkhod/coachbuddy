@@ -117,6 +117,15 @@ services:
         condition: service_healthy
       agents-python:
         condition: service_started
+      mcp-rust:
+        condition: service_started
+    # /health answers 503 when Postgres, MongoDB, Redis or mcp-rust is down.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
   pwa-nextjs:
     build:
