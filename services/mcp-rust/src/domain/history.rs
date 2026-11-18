@@ -7,12 +7,16 @@ use mongodb::Database;
 pub use crate::contract::{HistoryQueryInput, HistoryQueryOutput, PastWarmupSummary};
 
 /// Helper that builds the MongoDB filter document and find options.
-/// Query filter targets: { "coachId": coach_id, "status": "completed" }
+/// Matches the coach's documents that have a warm-up: plans whose warm-up section is
+/// done (contract shape, Phase 2 step 8 on) and older sessions with status "completed".
 /// Query options sort descending by createdAt with a limit of 1..20.
 pub fn build_history_filter_and_options(coach_id: &str, limit: i64) -> (Document, FindOptions) {
     let filter = doc! {
         "coachId": coach_id,
-        "status": "completed"
+        "$or": [
+            { "sectionStatus.warmup.state": "done" },
+            { "status": "completed" }
+        ]
     };
 
     let bounded_limit = limit.clamp(1, 20);
@@ -39,6 +43,29 @@ pub fn extract_past_warmup_from_doc(doc: &Document) -> Option<PastWarmupSummary>
         Ok(w) => w,
         Err(_) => return None,
     };
+
+    // Contract shape (schema/plan.schema.json): warmup.blocks[].name. The first block is
+    // usually the game, the rest are the drills.
+    if let Ok(blocks) = warmup.get_array("blocks") {
+        let names: Vec<String> = blocks
+            .iter()
+            .filter_map(|b| b.as_document())
+            .filter_map(|b| b.get_str("name").ok())
+            .map(str::to_string)
+            .collect();
+        if let Some((first, rest)) = names.split_first() {
+            return Some(PastWarmupSummary {
+                session_id: doc
+                    .get_str("planId")
+                    .unwrap_or(session_id.as_str())
+                    .to_string(),
+                created_at,
+                game_title: first.clone(),
+                style: String::new(),
+                drill_names: rest.to_vec(),
+            });
+        }
+    }
 
     let style = warmup.get_str("style").unwrap_or("").to_string();
 
@@ -157,7 +184,19 @@ mod tests {
     fn test_build_history_filter_and_options() {
         let (filter, options) = build_history_filter_and_options("coach-xyz", 5);
         assert_eq!(filter.get_str("coachId").unwrap(), "coach-xyz");
-        assert_eq!(filter.get_str("status").unwrap(), "completed");
+        let either = filter.get_array("$or").unwrap();
+        assert_eq!(
+            either[0]
+                .as_document()
+                .unwrap()
+                .get_str("sectionStatus.warmup.state")
+                .unwrap(),
+            "done"
+        );
+        assert_eq!(
+            either[1].as_document().unwrap().get_str("status").unwrap(),
+            "completed"
+        );
         assert_eq!(options.limit, Some(5));
         let sort_doc = options.sort.expect("Expected sort document");
         assert_eq!(sort_doc.get_i32("createdAt").unwrap(), -1);
@@ -223,5 +262,31 @@ mod tests {
             summary.drill_names,
             vec!["Scapular Pulls", "Overhead Squat Therapy"]
         );
+    }
+
+    #[test]
+    fn test_extract_past_warmup_from_contract_plan() {
+        // Same warm-up as schema/examples/plan/valid/2026-11-18-senior-two-injuries.json.
+        let sample_doc = doc! {
+            "_id": "pl_7f3a",
+            "planId": "pl_7f3a",
+            "coachId": "c_01",
+            "createdAt": "2026-11-18T09:00:00Z",
+            "sectionStatus": { "warmup": { "state": "done" } },
+            "warmup": {
+                "minutes": 12,
+                "targets": [{ "area": "Upper back", "why": "Rack position in A" }],
+                "blocks": [
+                    { "name": "Partner mirror game", "minutes": 4, "items": ["Mirror your partner"] },
+                    { "name": "Barbell prep", "minutes": 8, "items": ["Front squat holds x5"] }
+                ]
+            }
+        };
+
+        let summary = extract_past_warmup_from_doc(&sample_doc).expect("Extraction should succeed");
+        assert_eq!(summary.session_id, "pl_7f3a");
+        assert_eq!(summary.game_title, "Partner mirror game");
+        assert_eq!(summary.drill_names, vec!["Barbell prep"]);
+        assert_eq!(summary.style, "");
     }
 }

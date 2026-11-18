@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coachbuddy/gateway-go/internal/modelcatalog"
 	"github.com/coachbuddy/gateway-go/internal/models"
 	"github.com/coachbuddy/gateway-go/internal/store"
 )
@@ -36,7 +37,7 @@ func newFakeStore() *fakeStore {
 		links:    map[string]*models.SharedLink{},
 		events:   map[string][]string{},
 		routes: map[string]models.EphemeralAgentRoute{
-			"global": {Provider: "gemini", APIKey: "test-key", Model: store.DefaultModel},
+			"global": {Provider: "gemini", APIKey: "test-key", Model: modelcatalog.Embedded().Default().ID},
 		},
 		pingErrs: map[string]error{},
 	}
@@ -77,6 +78,8 @@ func (f *fakeStore) GetAgentPrefs(context.Context, string) ([]*models.AgentModel
 func (f *fakeStore) SaveAgentPrefs(context.Context, string, []models.AgentModelPref) ([]*models.AgentModelPref, error) {
 	return nil, errNotInFake
 }
+
+func (f *fakeStore) Models() *modelcatalog.Catalog { return modelcatalog.Embedded() }
 
 func (f *fakeStore) BuildEphemeralRoutingConfig(context.Context, string) (map[string]models.EphemeralAgentRoute, error) {
 	if f.fail != nil {

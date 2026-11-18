@@ -15,7 +15,7 @@ type Coach struct {
 type LLMAPIKey struct {
 	ID           string    `json:"id"`
 	CoachID      string    `json:"coachId"`
-	Provider     string    `json:"provider"` // "gemini" | "openai" | "anthropic" | "groq"
+	Provider     string    `json:"provider"` // a provider id from internal/modelcatalog
 	EncryptedKey []byte    `json:"-"`
 	Nonce        []byte    `json:"-"`
 	KeyHint      string    `json:"keyHint"`

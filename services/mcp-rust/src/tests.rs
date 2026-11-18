@@ -290,6 +290,13 @@ async fn real_mongodb_history_and_health() {
                   "warmup": {"gameTitle": "Not finished"}},
             doc! {"_id": "other", "coachId": "c2", "status": "completed", "createdAt": "2026-11-18T10:00:00Z",
                   "warmup": {"gameTitle": "Another coach"}},
+            // Contract-shape plans (Phase 2 step 8 on): no status field, warm-up blocks.
+            doc! {"_id": "pl_1", "planId": "pl_1", "coachId": "c1", "createdAt": "2026-11-18T12:00:00Z",
+                  "sectionStatus": {"warmup": {"state": "done"}},
+                  "warmup": {"minutes": 12, "blocks": [{"name": "Cone Flip Face-Off", "minutes": 4, "items": ["x"]},
+                                                        {"name": "Barbell Primer", "minutes": 8, "items": ["y"]}]}},
+            doc! {"_id": "pl_2", "planId": "pl_2", "coachId": "c1", "createdAt": "2026-11-18T13:00:00Z",
+                  "sectionStatus": {"warmup": {"state": "failed", "error": "model error"}}},
         ],
         None,
     )
@@ -307,9 +314,17 @@ async fn real_mongodb_history_and_health() {
     .await;
     let out = &r["result"]["structuredContent"];
     assert_eq!(r["result"]["isError"], false, "{r}");
-    assert_eq!(out["count"], 2, "only c1's completed sessions: {out}");
-    assert_eq!(out["recentWarmups"][0]["gameTitle"], "Tabata Engine Relay");
-    assert_eq!(out["recentWarmups"][1]["gameTitle"], "Partner Mirror");
+    assert_eq!(
+        out["count"], 3,
+        "c1's completed sessions and done warm-ups: {out}"
+    );
+    assert_eq!(out["recentWarmups"][0]["gameTitle"], "Cone Flip Face-Off");
+    assert_eq!(
+        out["recentWarmups"][0]["drillNames"],
+        json!(["Barbell Primer"])
+    );
+    assert_eq!(out["recentWarmups"][1]["gameTitle"], "Tabata Engine Relay");
+    assert_eq!(out["recentWarmups"][2]["gameTitle"], "Partner Mirror");
 
     let (status, _) = send(
         router(state.clone()),
