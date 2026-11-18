@@ -22,10 +22,11 @@ from google.adk.events import Event, EventActions
 from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError
 
 from app.agents import prompts
-from app.agents.outputs import ParserOut, ScalingOut, TimelineDraft, WarmupOut
+from app.agents.outputs import InjuriesOut, ParserOut, ScalingOut, TimelineDraft, WarmupOut
 from app.agents.schema_for_model import schema_for_model
 from app.contract.plan import (
     ClassInput,
+    Injury,
     PartScaling,
     Plan,
     SectionState,
@@ -46,8 +47,16 @@ MAX_ERROR = 300
 PROVISIONAL_WARMUP_MINUTES = 12
 
 
+# Fixed wording under every injury block (plan 2.2: conservative, suggestion only).
+INJURY_CAUTION = "Suggestion only. Check with the athlete; stop on pain."
+
+
 class SectionFailed(Exception):
     """Stops a section with a reason the coach can read."""
+
+
+class SectionSkipped(Exception):
+    """The section has nothing to do for this plan (for example no injuries in the comment)."""
 
 
 def as_json(value: Any) -> str:
@@ -71,7 +80,12 @@ def _validation_problems(exc: ValidationError) -> List[str]:
     return out
 
 
-def _rules_plan(wod: Wod, parts: Optional[List[PartScaling]] = None, warmup: Optional[Warmup] = None) -> Plan:
+def _rules_plan(
+    wod: Wod,
+    parts: Optional[List[PartScaling]] = None,
+    warmup: Optional[Warmup] = None,
+    injuries: Optional[List[Injury]] = None,
+) -> Plan:
     """A minimal Plan so the contract rules can check sections against the WOD."""
     pending = SectionState(state="pending")
     return Plan(
@@ -82,6 +96,7 @@ def _rules_plan(wod: Wod, parts: Optional[List[PartScaling]] = None, warmup: Opt
         wod=wod,
         warmup=warmup,
         parts=parts,
+        injuries=injuries,
         sectionStatus=SectionStatusMap(wod=pending, warmup=pending, parts=pending, injuries=pending, timeline=pending),
     )
 
@@ -168,6 +183,10 @@ class SectionAgent(BaseAgent):
 
         try:
             extra = await self.prepare(state)
+        except SectionSkipped:
+            yield finish("skipped")
+            await self._emit("skipped")
+            return
         except (SectionFailed, ToolError) as exc:
             reason = _short(str(exc))
             yield finish("failed", reason)
@@ -257,7 +276,12 @@ class ParserSection(SectionAgent):
         return out, problems
 
     def output(self, value: ParserOut) -> Dict[str, Any]:
-        return {"wod": value.wod.model_dump(mode="json", exclude_none=True), "warmupWishes": value.warmupWishes or ""}
+        return {
+            "wod": value.wod.model_dump(mode="json", exclude_none=True),
+            "warmupWishes": value.warmupWishes or "",
+            "today": [t.model_dump(mode="json", exclude_none=True) for t in value.today],
+            "injuryMentions": [m.model_dump(mode="json", exclude_none=True) for m in value.injuries],
+        }
 
 
 def _parser_inputs(state: Dict[str, Any]) -> str:
@@ -291,11 +315,17 @@ class WarmupSection(SectionAgent):
         return warmup.model_dump(mode="json", exclude_none=True), problems
 
 
+def _today_line(state: Dict[str, Any]) -> str:
+    today = state.get("today") or []
+    return f"Athletes who need attention today: {as_json(today)}" if today else "Athletes who need attention today: none"
+
+
 def _warmup_inputs(state: Dict[str, Any]) -> str:
     return "\n".join(
         [
             f"WOD: {as_json(state['wod'])}",
             f"Class length: {state['classMinutes']} minutes.",
+            _today_line(state),
             f"Coach's warm-up wishes: {state.get('warmupWishes') or 'none'}",
             f"Recent warm-ups of this coach: {as_json(state.get('recentWarmups') or [])}",
         ]
@@ -321,7 +351,55 @@ class ScalingSection(SectionAgent):
 
 
 def _scaling_inputs(state: Dict[str, Any]) -> str:
-    return f"WOD: {as_json(state['wod'])}"
+    return f"WOD: {as_json(state['wod'])}\n{_today_line(state)}"
+
+
+# --- Injuries -------------------------------------------------------------------------
+
+
+class InjurySection(SectionAgent):
+    async def prepare(self, state):
+        _need_wod(state)
+        if not state.get("injuryMentions"):
+            raise SectionSkipped()
+        return {}
+
+    async def check(self, state, draft):
+        out = InjuriesOut.model_validate(draft)
+        mentions = state["injuryMentions"]
+        problems: List[str] = []
+        got = [a.label for a in out.injuries]
+        want = [m["label"] for m in mentions]
+        if got != want:
+            problems.append(f"injuries: expected one entry per injury in this order {want}, got {got}")
+            return None, problems
+        injuries = [
+            Injury(
+                label=m["label"],
+                fromComment=m["fromComment"],
+                returnNote=m.get("returnNote"),
+                warmup=a.warmup,
+                parts=a.parts,
+                caution=INJURY_CAUTION,
+            )
+            for m, a in zip(mentions, out.injuries)
+        ]
+        problems += check_plan_rules(_rules_plan(Wod.model_validate(state["wod"]), injuries=injuries))
+        return [i.model_dump(mode="json", exclude_none=True) for i in injuries], problems
+
+    def output(self, value):
+        return {"injuries": value}
+
+
+def _injury_inputs(state: Dict[str, Any]) -> str:
+    warmup = state.get("warmup")
+    return "\n".join(
+        [
+            f"WOD: {as_json(state['wod'])}",
+            f"Warm-up: {as_json(warmup)}" if warmup else "Warm-up: not planned yet; advise for a general warm-up.",
+            f"Injuries: {as_json(state['injuryMentions'])}",
+        ]
+    )
 
 
 # --- Timeline -------------------------------------------------------------------------
@@ -386,6 +464,7 @@ SECTIONS = {
     "wod": ("WodParserAgent", ParserSection, prompts.PARSER, _parser_inputs, ParserOut, True, "parser"),
     "warmup": ("WarmupPlannerAgent", WarmupSection, prompts.WARMUP, _warmup_inputs, WarmupOut, False, "warmup"),
     "parts": ("ScalingAgent", ScalingSection, prompts.SCALING, _scaling_inputs, ScalingOut, False, "scaling"),
+    "injuries": ("InjuryAgent", InjurySection, prompts.INJURY, _injury_inputs, InjuriesOut, False, "injury"),
     "timeline": ("TimelineAgent", TimelineSection, prompts.TIMELINE, _timeline_inputs, TimelineDraft, False, "timeline"),
 }
 
@@ -401,4 +480,4 @@ def role_for(section: str) -> str:
 
 
 # Re-exported for tests.
-__all__ = ["SectionAgent", "SectionFailed", "AgentRun", "build_section", "role_for", "Warmup"]
+__all__ = ["SectionAgent", "SectionFailed", "SectionSkipped", "AgentRun", "build_section", "role_for", "Warmup"]

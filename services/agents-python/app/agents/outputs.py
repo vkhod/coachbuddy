@@ -5,7 +5,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, constr
 
-from app.contract.plan import PartScaling, TimelineBlock, Warmup, Wod
+from app.contract.plan import InjuryPart, PartScaling, TimelineBlock, TodayGroup, Warmup, Wod
+
+
+class InjuryMention(BaseModel):
+    """One injury as the comment states it. Becomes the label, fromComment and returnNote
+    of a contract Injury; the Injury agent adds the advice."""
+
+    model_config = ConfigDict(extra="forbid")
+    label: constr(min_length=1, max_length=40) = Field(..., description='Body area, for example "Ankle", "Shoulder", "Lower back".')
+    fromComment: constr(max_length=200) = Field(..., description="The words of the comment this injury comes from.")
+    returnNote: constr(max_length=60) | None = Field(None, description='For an athlete coming back, for example "returning after 2 weeks". Null otherwise.')
 
 
 class ParserOut(BaseModel):
@@ -14,6 +24,20 @@ class ParserOut(BaseModel):
     warmupWishes: constr(max_length=200) | None = Field(
         None, description="What the coach's comment asks of the warm-up, in the coach's words. Null if nothing."
     )
+    today: list[TodayGroup] = Field(default_factory=list, max_length=6)
+    injuries: list[InjuryMention] = Field(default_factory=list, max_length=6)
+
+
+class InjuryAdvice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: constr(min_length=1, max_length=40) = Field(..., description="Same label as the injury in the input, same order.")
+    warmup: constr(min_length=1, max_length=100)
+    parts: list[InjuryPart] = Field(..., max_length=6)
+
+
+class InjuriesOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    injuries: list[InjuryAdvice] = Field(..., min_length=1, max_length=6)
 
 
 WarmupOut = Warmup

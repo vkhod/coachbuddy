@@ -74,7 +74,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Coach Buddy agents",
-    description="Plan pipeline on Google ADK: Parser, then Warm-up and Scaling in parallel, then Timeline.",
+    description="Plan pipeline on Google ADK: Parser, then Warm-up and Scaling in parallel, then Injury and Timeline.",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -95,6 +95,7 @@ TOPOLOGY = {
         {"name": "WodParserAgent", "role": "parser", "section": "wod", "after": []},
         {"name": "WarmupPlannerAgent", "role": "warmup", "section": "warmup", "after": ["WodParserAgent"], "mcpTool": "get_recent_coaching_history"},
         {"name": "ScalingAgent", "role": "scaling", "section": "parts", "after": ["WodParserAgent"]},
+        {"name": "InjuryAgent", "role": "injury", "section": "injuries", "after": ["WarmupPlannerAgent", "ScalingAgent"], "onlyWhen": "the comment names injuries"},
         {"name": "TimelineAgent", "role": "timeline", "section": "timeline", "after": ["WarmupPlannerAgent", "ScalingAgent"], "mcpTool": "verify_timeline_math"},
     ],
 }

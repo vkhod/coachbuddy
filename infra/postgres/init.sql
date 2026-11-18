@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS llm_api_keys (
 CREATE TABLE IF NOT EXISTS agent_model_prefs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     coach_id UUID NOT NULL REFERENCES coaches(id) ON DELETE CASCADE,
-    agent_role VARCHAR(50) NOT NULL, -- 'global', 'parser', 'warmup', 'scaling', 'timeline'
+    agent_role VARCHAR(50) NOT NULL, -- 'global', 'parser', 'warmup', 'scaling', 'injury', 'timeline'
     provider VARCHAR(50) NOT NULL DEFAULT 'gemini',
     model_identifier VARCHAR(120) NOT NULL DEFAULT 'gemini/gemini-3.8-flash',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

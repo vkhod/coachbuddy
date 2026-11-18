@@ -27,7 +27,7 @@ type LLMAPIKey struct {
 type AgentModelPref struct {
 	ID              string    `json:"id"`
 	CoachID         string    `json:"coachId"`
-	AgentRole       string    `json:"agentRole"` // "global" | "parser" | "warmup" | "scaling" | "timeline"
+	AgentRole       string    `json:"agentRole"` // one of store.AgentRoles
 	Provider        string    `json:"provider"`
 	ModelIdentifier string    `json:"modelIdentifier"`
 	UpdatedAt       time.Time `json:"updatedAt"`

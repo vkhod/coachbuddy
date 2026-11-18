@@ -2,12 +2,13 @@
 
 Built per request, because every agent's model is bound to that request's key:
 
-    START -> Parser -> Warm-up  --+
-                    -> Scaling  --+-> join -> Timeline
+    START -> Parser -> Warm-up  --+          +-> Injury (only when the comment names injuries)
+                    -> Scaling  --+-> join --+-> Timeline
 
-Warm-up and Scaling run in parallel. The Injury agent and the "today" groups are added in
-Phase 2 step 9; until then the injuries section is reported as skipped. ADK's Workflow
-replaces the deprecated SequentialAgent/ParallelAgent (capability report, decision 5.1).
+Warm-up and Scaling run in parallel, then Injury and Timeline (the timeline does not need
+the injury blocks). The parser also reads who attends today (`today`) and the injuries from
+the comment. ADK's Workflow replaces the deprecated SequentialAgent/ParallelAgent
+(capability report, decision 5.1).
 """
 
 from __future__ import annotations
@@ -90,7 +91,7 @@ class PlanPipeline:
         sectionStatus; only bad input or missing routes raise (InputError, RouteError)."""
         plan_id = req.sessionId
         message, has_image = _user_message(req)
-        routes = {s: resolve_route(role_for(s), req.routingConfig) for s in ("wod", "warmup", "parts", "timeline")}
+        routes = {s: resolve_route(role_for(s), req.routingConfig) for s in ("wod", "warmup", "parts", "injuries", "timeline")}
 
         async def notify(section: str, state: str, error: Optional[str]) -> None:
             if publish is None:
@@ -107,6 +108,7 @@ class PlanPipeline:
                 (node["wod"], node["warmup"]),
                 (node["wod"], node["parts"]),
                 ((node["warmup"], node["parts"]), join),
+                (join, node["injuries"]),
                 (join, node["timeline"]),
             ],
         )
@@ -120,7 +122,6 @@ class PlanPipeline:
         )
         runner = Runner(app_name=APP_NAME, agent=workflow, session_service=sessions)
         started = time.perf_counter()
-        await notify("injuries", "skipped", None)
         async for _ in runner.run_async(user_id=req.coachId, session_id=session.id, new_message=message):
             pass
         session = await sessions.get_session(app_name=APP_NAME, user_id=req.coachId, session_id=session.id)
@@ -129,9 +130,6 @@ class PlanPipeline:
         now = datetime.now(timezone.utc).isoformat()
         status: Dict[str, Dict[str, Any]] = {}
         for section in SECTIONS:
-            if section == "injuries":
-                status[section] = {"state": "skipped"}
-                continue
             status[section] = state.get(f"status:{section}") or {"state": "failed", "error": "the section did not run"}
 
         comment = req.input.coachConstraints.strip()
@@ -145,13 +143,15 @@ class PlanPipeline:
             "createdAt": now,
             "updatedAt": now,
         }
-        for section in ("wod", "warmup", "parts", "timeline"):
+        if status["wod"]["state"] == "done" and state.get("today"):
+            doc["today"] = state["today"]
+        for section in ("wod", "warmup", "parts", "injuries", "timeline"):
             if status[section]["state"] == "done" and state.get(section) is not None:
                 doc[section] = state[section]
 
         # Our own output must satisfy the contract; anything else is a bug here, not a model error.
         Plan.model_validate(doc)
-        doc["agentRuns"] = [state[f"run:{s}"] for s in ("wod", "warmup", "parts", "timeline") if state.get(f"run:{s}")]
+        doc["agentRuns"] = [state[f"run:{s}"] for s in ("wod", "warmup", "parts", "injuries", "timeline") if state.get(f"run:{s}")]
         doc["orchestrationLatencyMs"] = int((time.perf_counter() - started) * 1000)
         await notify("plan", "done", None)
         return doc
