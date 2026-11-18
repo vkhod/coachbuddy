@@ -1,4 +1,4 @@
-use futures_util::stream::StreamExt;
+use futures_util::stream::TryStreamExt;
 use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
 use mongodb::Database;
@@ -96,24 +96,12 @@ pub fn extract_past_warmup_from_doc(doc: &Document) -> Option<PastWarmupSummary>
 
 /// Queries MongoDB `wod_sessions` for the coach's recent completed warm-ups.
 /// This prevents repetitive game/drill programming across consecutive days.
+/// Any MongoDB failure is returned as an error, never as an empty history.
 pub async fn query_recent_coaching_history(
     db: &Database,
     input: HistoryQueryInput,
 ) -> Result<HistoryQueryOutput, String> {
     let collection = db.collection::<Document>("wod_sessions");
-
-    // =========================================================================
-    // TODO(engineer) 1.1: Build MongoDB query filter and sort options
-    //
-    // Core requirements:
-    // 1. Build filter for coachId & completed status:
-    //    `doc! { "coachId": &input.coach_id, "status": "completed" }`
-    // 2. Build sort options descending on `createdAt` with limit (default 5):
-    //    `FindOptions::builder().sort(doc! { "createdAt": -1 }).limit(input.limit.clamp(1, 20)).build()`
-    //    (You can also invoke `build_history_filter_and_options(&input.coach_id, input.limit)`)
-    // 3. Query the collection cursor:
-    //    `let mut cursor = collection.find(filter, options).await.map_err(|e| e.to_string())?;`
-    // =========================================================================
 
     let (filter, options) = build_history_filter_and_options(&input.coach_id, input.limit);
     let mut cursor = collection
@@ -123,11 +111,15 @@ pub async fn query_recent_coaching_history(
 
     let mut recent_warmups: Vec<PastWarmupSummary> = Vec::new();
 
-    while let Some(doc_result) = cursor.next().await {
-        if let Ok(doc) = doc_result {
-            if let Some(summary) = extract_past_warmup_from_doc(&doc) {
-                recent_warmups.push(summary);
-            }
+    // A read error fails the whole query: a partial list would look like
+    // "the coach has little history" when the database is actually failing.
+    while let Some(doc) = cursor
+        .try_next()
+        .await
+        .map_err(|e| format!("MongoDB read error: {}", e))?
+    {
+        if let Some(summary) = extract_past_warmup_from_doc(&doc) {
+            recent_warmups.push(summary);
         }
     }
 

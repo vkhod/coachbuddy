@@ -38,7 +38,13 @@ class RustMcpClient:
         }
         try:
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
-                resp = await client.post(self.mcp_endpoint, json=rpc_payload)
+                # Streamable HTTP (mcp-rust on rmcp) answers 406 without this Accept header.
+                # This client is replaced by ADK's McpToolset in Phase 2 step 8.
+                resp = await client.post(
+                    self.mcp_endpoint,
+                    json=rpc_payload,
+                    headers={"Accept": "application/json, text/event-stream"},
+                )
                 resp.raise_for_status()
                 body = resp.json()
 

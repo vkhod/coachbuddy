@@ -5,24 +5,22 @@ use std::fmt::Write;
 // Input and output types are generated from schema/tools.schema.json (src/contract.rs).
 pub use crate::contract::{QrGenerateInput, QrGenerateOutput};
 
-pub fn generate_qr_svg(input: QrGenerateInput) -> QrGenerateOutput {
-    let payload = if input.data.trim().is_empty() {
-        "https://coachbuddy.app".to_string()
-    } else {
-        input.data.trim().to_string()
-    };
-    let size = input.size.clamp(128, 1024);
-
-    let svg = match QrCode::with_error_correction_level(payload.as_bytes(), EcLevel::M) {
-        Ok(code) => render_matrix_to_svg(&code, size),
-        Err(_) => render_fallback_svg(size),
-    };
-
-    QrGenerateOutput {
-        svg,
-        data: payload,
-        size,
+/// Encodes `data` as an SVG QR code. Empty data, or data too long for a QR
+/// code, is an error: the caller gets no placeholder image.
+pub fn generate_qr_svg(input: QrGenerateInput) -> Result<QrGenerateOutput, String> {
+    let payload = input.data.trim();
+    if payload.is_empty() {
+        return Err("data is empty; nothing to encode".to_string());
     }
+    let size = input.size.clamp(128, 1024);
+    let code = QrCode::with_error_correction_level(payload.as_bytes(), EcLevel::M)
+        .map_err(|e| format!("cannot encode {} bytes as a QR code: {}", payload.len(), e))?;
+
+    Ok(QrGenerateOutput {
+        svg: render_matrix_to_svg(&code, size),
+        data: payload.to_string(),
+        size,
+    })
 }
 
 fn render_matrix_to_svg(code: &QrCode, display_size: u32) -> String {
@@ -56,13 +54,6 @@ fn render_matrix_to_svg(code: &QrCode, display_size: u32) -> String {
     )
 }
 
-fn render_fallback_svg(display_size: u32) -> String {
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="{display_size}" height="{display_size}"><rect width="100%" height="100%" rx="18" fill="#0B0F17"/><rect x="8" y="8" width="240" height="240" rx="14" fill="#FFFFFF" stroke="#CCFF00" stroke-width="4"/><rect x="32" y="32" width="60" height="60" rx="4" fill="#0B0F17"/><rect x="164" y="32" width="60" height="60" rx="4" fill="#0B0F17"/><rect x="32" y="164" width="60" height="60" rx="4" fill="#0B0F17"/></svg>"##,
-        display_size = display_size
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,7 +64,7 @@ mod tests {
             data: "https://coachbuddy.app/s/abc123".to_string(),
             size: 300,
         };
-        let output = generate_qr_svg(input);
+        let output = generate_qr_svg(input).expect("valid URL encodes");
         assert_eq!(output.size, 300);
         assert!(output.svg.contains("<svg"));
         assert!(output.svg.contains("stroke=\"#CCFF00\""));
@@ -82,12 +73,34 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_qr_svg_defaults_and_clamping() {
+    fn test_generate_qr_svg_clamps_size() {
         let output = generate_qr_svg(QrGenerateInput {
-            data: "".to_string(),
+            data: " https://cocoach.vkhod.dev/s/cb-0123456789ab ".to_string(),
             size: 50,
-        });
+        })
+        .expect("valid URL encodes");
         assert_eq!(output.size, 128); // clamped to minimum 128
-        assert_eq!(output.data, "https://coachbuddy.app");
+        assert_eq!(output.data, "https://cocoach.vkhod.dev/s/cb-0123456789ab");
+    }
+
+    #[test]
+    fn test_generate_qr_svg_rejects_empty_data() {
+        let err = generate_qr_svg(QrGenerateInput {
+            data: "   ".to_string(),
+            size: 256,
+        })
+        .unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn test_generate_qr_svg_rejects_data_too_long_for_a_qr_code() {
+        // Level M holds at most 2331 bytes; there is no placeholder image.
+        let err = generate_qr_svg(QrGenerateInput {
+            data: "x".repeat(3000),
+            size: 256,
+        })
+        .unwrap_err();
+        assert!(err.contains("3000 bytes"), "{err}");
     }
 }
