@@ -3,11 +3,11 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -18,8 +18,35 @@ import (
 	"github.com/google/uuid"
 )
 
+// Store is what the handlers need from storage. *store.DataStore implements it
+// against PostgreSQL, MongoDB and Redis; the tests use an in-memory fake.
+type Store interface {
+	Ping(ctx context.Context) map[string]error
+
+	CreateCoach(ctx context.Context, email, password, displayName, boxName string, defaultDuration int) (*models.Coach, error)
+	AuthenticateCoach(ctx context.Context, email, password string) (*models.Coach, error)
+	GetCoach(ctx context.Context, coachID string) (*models.Coach, error)
+	UpdateCoachProfile(ctx context.Context, coachID, displayName, boxName string, defaultDuration int) (*models.Coach, error)
+
+	SaveAPIKey(ctx context.Context, coachID, provider, rawKey string, isPrimary bool) (*models.LLMAPIKey, error)
+	ListAPIKeys(ctx context.Context, coachID string) ([]*models.LLMAPIKey, error)
+	DeleteAPIKey(ctx context.Context, coachID, keyID string) error
+	GetAgentPrefs(ctx context.Context, coachID string) ([]*models.AgentModelPref, error)
+	SaveAgentPrefs(ctx context.Context, coachID string, prefs []models.AgentModelPref) ([]*models.AgentModelPref, error)
+	BuildEphemeralRoutingConfig(ctx context.Context, coachID string) (map[string]models.EphemeralAgentRoute, error)
+
+	SaveSession(ctx context.Context, sessionID string, doc map[string]interface{}) error
+	GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error)
+	ListSessions(ctx context.Context, coachID string) ([]map[string]interface{}, error)
+	DeleteSession(ctx context.Context, sessionID string) error
+	SessionEvents(ctx context.Context, sessionID string) (*store.EventStream, error)
+
+	SaveSharedLink(ctx context.Context, link *models.SharedLink) error
+	GetSharedLink(ctx context.Context, code string) (*models.SharedLink, error)
+}
+
 type APIHandler struct {
-	Store              *store.DataStore
+	Store              Store
 	Tokens             *auth.TokenManager
 	AgentsServiceURL   string
 	McpRustURL         string
@@ -28,7 +55,7 @@ type APIHandler struct {
 	HttpClient         *http.Client
 }
 
-func NewAPIHandler(ds *store.DataStore, tm *auth.TokenManager, agentsURL, mcpRustURL, shareBaseURL, internalToken string) *APIHandler {
+func NewAPIHandler(ds Store, tm *auth.TokenManager, agentsURL, mcpRustURL, shareBaseURL, internalToken string) *APIHandler {
 	return &APIHandler{
 		Store:              ds,
 		Tokens:             tm,
@@ -52,21 +79,61 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// writeStoreError logs an unexpected storage error and answers 500 without
+// exposing database details to the client.
+func writeStoreError(w http.ResponseWriter, op string, err error) {
+	log.Printf("[gateway] %s: %v", op, err)
+	writeError(w, http.StatusInternalServerError, op+" failed")
+}
+
 // --- Health Check ---
 
+// Health reports each dependency the gateway cannot work without. It answers
+// 503 if any of them is down, so the container is marked unhealthy. The body
+// says which one failed but not why; the reason is logged.
 func (h *APIHandler) Health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":  "ok",
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	results := h.Store.Ping(ctx)
+	results["mcp-rust"] = h.pingMCPRust(ctx)
+
+	checks := make(map[string]string, len(results))
+	healthy := true
+	for name, err := range results {
+		if err != nil {
+			healthy = false
+			checks[name] = "unavailable"
+			log.Printf("[gateway] health: %s: %v", name, err)
+			continue
+		}
+		checks[name] = "ok"
+	}
+	status, code := "ok", http.StatusOK
+	if !healthy {
+		status, code = "unavailable", http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, map[string]interface{}{
+		"status":  status,
 		"service": "gateway-go",
-		"version": "1.0.0",
-		"features": []string{
-			"jwt-auth",
-			"aes-256-gcm-byok-vault",
-			"google-adk-orchestrator-proxy",
-			"redis-sse-streaming",
-			"rust-mcp-qr-sharing",
-		},
+		"checks":  checks,
 	})
+}
+
+func (h *APIHandler) pingMCPRust(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.McpRustURL+"/health", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := h.HttpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // --- Auth Endpoints ---
@@ -87,8 +154,15 @@ func (h *APIHandler) Register(w http.ResponseWriter, r *http.Request) {
 		req.DisplayName = "Coach"
 	}
 	coach, err := h.Store.CreateCoach(r.Context(), req.Email, req.Password, req.DisplayName, req.BoxName, req.DefaultClassDurationMin)
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrEmailTaken):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case errors.Is(err, store.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		writeStoreError(w, "register", err)
 		return
 	}
 	token, err := h.Tokens.GenerateToken(coach.ID, coach.Email)
@@ -112,8 +186,12 @@ func (h *APIHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	coach, err := h.Store.AuthenticateCoach(r.Context(), req.Email, req.Password)
-	if err != nil {
+	if errors.Is(err, store.ErrInvalidCredentials) {
 		writeError(w, http.StatusUnauthorized, "invalid email or password")
+		return
+	}
+	if err != nil {
+		writeStoreError(w, "login", err)
 		return
 	}
 	token, err := h.Tokens.GenerateToken(coach.ID, coach.Email)
@@ -130,8 +208,12 @@ func (h *APIHandler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	coachID := auth.GetCoachID(r.Context())
 	coach, err := h.Store.GetCoach(r.Context(), coachID)
-	if err != nil {
+	if errors.Is(err, store.ErrCoachNotFound) {
 		writeError(w, http.StatusNotFound, "coach not found")
+		return
+	}
+	if err != nil {
+		writeStoreError(w, "get coach", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"coach": coach})
@@ -154,7 +236,7 @@ func (h *APIHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update profile")
+		writeStoreError(w, "update profile", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"coach": coach})
@@ -166,7 +248,7 @@ func (h *APIHandler) ListKeys(w http.ResponseWriter, r *http.Request) {
 	coachID := auth.GetCoachID(r.Context())
 	keys, err := h.Store.ListAPIKeys(r.Context(), coachID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStoreError(w, "list keys", err)
 		return
 	}
 	if keys == nil {
@@ -195,7 +277,7 @@ func (h *APIHandler) SaveKey(w http.ResponseWriter, r *http.Request) {
 	}
 	keyRec, err := h.Store.SaveAPIKey(r.Context(), coachID, req.Provider, req.APIKey, req.IsPrimary)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeStoreError(w, "save key", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"key": keyRec})
@@ -208,7 +290,15 @@ func (h *APIHandler) DeleteKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing key id")
 		return
 	}
-	_ = h.Store.DeleteAPIKey(r.Context(), coachID, keyID)
+	err := h.Store.DeleteAPIKey(r.Context(), coachID, keyID)
+	if errors.Is(err, store.ErrKeyNotFound) {
+		writeError(w, http.StatusNotFound, "key not found")
+		return
+	}
+	if err != nil {
+		writeStoreError(w, "delete key", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -216,7 +306,7 @@ func (h *APIHandler) GetAgentPrefs(w http.ResponseWriter, r *http.Request) {
 	coachID := auth.GetCoachID(r.Context())
 	prefs, err := h.Store.GetAgentPrefs(r.Context(), coachID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStoreError(w, "get agent preferences", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"preferences": prefs})
@@ -232,8 +322,12 @@ func (h *APIHandler) SaveAgentPrefs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prefs, err := h.Store.SaveAgentPrefs(r.Context(), coachID, req.Preferences)
+	if errors.Is(err, store.ErrInvalidInput) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStoreError(w, "save agent preferences", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"preferences": prefs})
@@ -298,7 +392,12 @@ func (h *APIHandler) GenerateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.Store.SaveSession(r.Context(), sessionID, sessionDoc)
+	// The owner is always the authenticated coach, whatever the orchestrator sent.
+	sessionDoc["coachId"] = coachID
+	if err := h.Store.SaveSession(r.Context(), sessionID, sessionDoc); err != nil {
+		writeStoreError(w, "save session", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sessionId": sessionID,
 		"status":    "completed",
@@ -310,7 +409,7 @@ func (h *APIHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	coachID := auth.GetCoachID(r.Context())
 	sessions, err := h.Store.ListSessions(r.Context(), coachID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStoreError(w, "list sessions", err)
 		return
 	}
 	if sessions == nil {
@@ -319,27 +418,35 @@ func (h *APIHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": sessions})
 }
 
-// getOwnedSession loads a session and checks that it belongs to the authenticated coach.
-// A session owned by someone else is reported as not found, so its existence is not revealed.
-func (h *APIHandler) getOwnedSession(r *http.Request, sessionID string) (map[string]interface{}, bool) {
+// getOwnedSession loads a session and checks that it belongs to the authenticated
+// coach. A session owned by someone else is reported as not found, so its
+// existence is not revealed. It writes the error response itself and returns
+// false when the caller should stop.
+func (h *APIHandler) getOwnedSession(w http.ResponseWriter, r *http.Request, sessionID string) (map[string]interface{}, bool) {
 	coachID := auth.GetCoachID(r.Context())
 	if coachID == "" {
+		writeError(w, http.StatusNotFound, "session not found")
 		return nil, false
 	}
 	doc, err := h.Store.GetSession(r.Context(), sessionID)
-	if err != nil || doc == nil {
+	if errors.Is(err, store.ErrSessionNotFound) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return nil, false
+	}
+	if err != nil {
+		writeStoreError(w, "get session", err)
 		return nil, false
 	}
 	if owner, _ := doc["coachId"].(string); owner != coachID {
+		writeError(w, http.StatusNotFound, "session not found")
 		return nil, false
 	}
 	return doc, true
 }
 
 func (h *APIHandler) GetSession(w http.ResponseWriter, r *http.Request) {
-	doc, ok := h.getOwnedSession(r, r.PathValue("id"))
+	doc, ok := h.getOwnedSession(w, r, r.PathValue("id"))
 	if !ok {
-		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"session": doc})
@@ -347,12 +454,16 @@ func (h *APIHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
-	if _, ok := h.getOwnedSession(r, sessionID); !ok {
+	if _, ok := h.getOwnedSession(w, r, sessionID); !ok {
+		return
+	}
+	err := h.Store.DeleteSession(r.Context(), sessionID)
+	if errors.Is(err, store.ErrSessionNotFound) {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	if err := h.Store.DeleteSession(r.Context(), sessionID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete session")
+	if err != nil {
+		writeStoreError(w, "delete session", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -360,69 +471,61 @@ func (h *APIHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 
 // --- SSE Progress Stream (Redis Pub/Sub) ---
 
+func isCompletedEvent(evt string) bool {
+	return strings.Contains(evt, `"step":"completed"`) || strings.Contains(evt, `"step": "completed"`)
+}
+
 func (h *APIHandler) StreamSessionEvents(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	// Same rule as read, delete and share: another coach's session, or an unknown
 	// one, is reported as not found before the stream opens.
-	if _, ok := h.getOwnedSession(r, sessionID); !ok {
-		writeError(w, http.StatusNotFound, "session not found")
+	if _, ok := h.getOwnedSession(w, r, sessionID); !ok {
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 
-	rc := h.Store.Redis()
-	if rc == nil {
-		// Emit immediate completion event if Redis isn't running
-		payload, _ := json.Marshal(map[string]interface{}{
-			"sessionId": sessionID,
-			"step":      "completed",
-			"status":    "completed",
-			"message":   "Multi-agent orchestration complete",
-		})
-		fmt.Fprintf(w, "data: %s\n\n", string(payload))
-		flusher.Flush()
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 
-	// Replay any buffered events from Redis list before listening to live stream
-	buffered, err := rc.LRange(ctx, "session:buffered_events:"+sessionID, 0, -1).Result()
-	if err == nil {
-		for _, evt := range buffered {
-			fmt.Fprintf(w, "data: %s\n\n", evt)
-			flusher.Flush()
-			if strings.Contains(evt, `"step":"completed"`) || strings.Contains(evt, `"step": "completed"`) {
-				return
-			}
+	// Open the subscription before the stream, so a Redis failure is a plain
+	// error response rather than an event stream that never says anything.
+	events, err := h.Store.SessionEvents(ctx, sessionID)
+	if err != nil {
+		log.Printf("[gateway] session events %s: %v", sessionID, err)
+		writeError(w, http.StatusServiceUnavailable, "session events unavailable")
+		return
+	}
+	defer events.Close()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	for _, evt := range events.Buffered {
+		fmt.Fprintf(w, "data: %s\n\n", evt)
+		flusher.Flush()
+		if isCompletedEvent(evt) {
+			return
 		}
 	}
-
-	pubsub := rc.Subscribe(ctx, "session:events:"+sessionID)
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
+		case evt, ok := <-events.Live:
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
+			fmt.Fprintf(w, "data: %s\n\n", evt)
 			flusher.Flush()
-			if strings.Contains(msg.Payload, `"step":"completed"`) || strings.Contains(msg.Payload, `"step": "completed"`) {
+			if isCompletedEvent(evt) {
 				return
 			}
 		}
@@ -435,8 +538,7 @@ func (h *APIHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	coachID := auth.GetCoachID(r.Context())
 	sessionID := r.PathValue("id")
 
-	if _, ok := h.getOwnedSession(r, sessionID); !ok {
-		writeError(w, http.StatusNotFound, "session not found")
+	if _, ok := h.getOwnedSession(w, r, sessionID); !ok {
 		return
 	}
 
@@ -453,7 +555,12 @@ func (h *APIHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 	shortCode := "cb-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	shareURL := fmt.Sprintf("%s/%s", h.PublicShareBaseURL, shortCode)
 
-	qrSVG := h.fetchQRFromRustMCP(shareURL)
+	qrSVG, err := h.fetchQRFromRustMCP(r.Context(), shareURL)
+	if err != nil {
+		log.Printf("[gateway] QR code for %s: %v", sessionID, err)
+		writeError(w, http.StatusBadGateway, "QR code service unavailable, try again")
+		return
+	}
 
 	link := &models.SharedLink{
 		ShortCode:         shortCode,
@@ -462,83 +569,50 @@ func (h *APIHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 		CoachID:           coachID,
 		IncludeCoachNotes: includeNotes,
 		QRSVG:             qrSVG,
-		ViewCount:         0,
-		CreatedAt:         time.Now(),
 	}
-	_ = h.Store.SaveSharedLink(r.Context(), link)
-
+	if err := h.Store.SaveSharedLink(r.Context(), link); err != nil {
+		writeStoreError(w, "save share link", err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, link)
 }
 
 func (h *APIHandler) ResolveShareLink(w http.ResponseWriter, r *http.Request) {
 	code := r.PathValue("code")
 	link, err := h.Store.GetSharedLink(r.Context(), code)
-	if err != nil {
+	if errors.Is(err, store.ErrLinkNotFound) {
 		writeError(w, http.StatusNotFound, "shared link expired or not found")
+		return
+	}
+	if err != nil {
+		writeStoreError(w, "resolve share link", err)
 		return
 	}
 	link.ShareURL = fmt.Sprintf("%s/%s", h.PublicShareBaseURL, link.ShortCode)
 
 	sessionDoc, err := h.Store.GetSession(r.Context(), link.MongoSessionID)
-	if err != nil {
+	if errors.Is(err, store.ErrSessionNotFound) {
 		writeError(w, http.StatusNotFound, "underlying WOD session not found")
 		return
 	}
+	if err != nil {
+		writeStoreError(w, "resolve share link", err)
+		return
+	}
 
-	// Copy session document so we can filter private coaching warnings/notes if Athlete mode was selected
-	raw, _ := json.Marshal(sessionDoc)
+	// Work on a JSON copy so private coaching notes can be removed for athlete links.
+	raw, err := json.Marshal(sessionDoc)
+	if err != nil {
+		writeStoreError(w, "resolve share link", err)
+		return
+	}
 	var filtered map[string]interface{}
-	_ = json.Unmarshal(raw, &filtered)
-
-	// =========================================================================
-	// TODO(engineer) 2.3: Server-side Sanitization for Athlete Share Links
-	//
-	// When `!link.IncludeCoachNotes`, athletes scan the QR code and should see
-	// the workout movements and timeline structure, BUT NOT private coaching cues.
-	//
-	// Actions to take when `!link.IncludeCoachNotes`:
-	// 1. Remove `coachWarnings` from timeline:
-	//    `delete(tl, "coachWarnings")`
-	// 2. Remove `notes` from each block in timeline:
-	//    `if blocks, ok := tl["blocks"].([]interface{}); ok { for _, b := range blocks { if bm, ok := b.(map[string]interface{}); ok { delete(bm, "notes") } } }`
-	// 3. Remove `cues` from exercises (both `parsedWod.movements` or `scaling.exercises`):
-	//    Check `scaling` -> `exercises`: remove `cues`
-	// 4. Remove `agentTraces` from root `filtered`:
-	//    `delete(filtered, "agentTraces")`
-	// =========================================================================
-
+	if err := json.Unmarshal(raw, &filtered); err != nil {
+		writeStoreError(w, "resolve share link", err)
+		return
+	}
 	if !link.IncludeCoachNotes {
-		// delete any agent cues, details, data
-		delete(filtered, "agentTraces")
-		// delete coach notes from the timeline data
-		if tl, ok := filtered["timeline"].(map[string]interface{}); ok {
-			delete(tl, "coachWarnings")
-			if blocks, ok := tl["blocks"].([]interface{}); ok {
-				for _, b := range blocks {
-					if bm, ok := b.(map[string]interface{}); ok {
-						delete(bm, "notes")
-					}
-				}
-			}
-		}
-
-		// delete scaling details
-		if scaling, ok := filtered["scaling"].(map[string]interface{}); ok {
-			if exercises, ok := scaling["exercises"].([]interface{}); ok {
-				for _, ex := range exercises {
-					if em, ok := ex.(map[string]interface{}); ok {
-						delete(em, "cues")
-					}
-				}
-			}
-		}
-		if exercises, ok := filtered["exercises"].([]interface{}); ok {
-			for _, ex := range exercises {
-				if em, ok := ex.(map[string]interface{}); ok {
-					delete(em, "cues")
-				}
-			}
-		}
+		sanitizeForAthletes(filtered)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"share":   link,
@@ -546,214 +620,70 @@ func (h *APIHandler) ResolveShareLink(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *APIHandler) fetchQRFromRustMCP(shareURL string) string {
-	reqBody, _ := json.Marshal(map[string]interface{}{
-		"data": shareURL,
-		"size": 256,
-	})
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Post(h.McpRustURL+"/tools/qr", "application/json", bytes.NewReader(reqBody))
-	if err == nil && resp != nil {
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			var parsed struct {
-				SVG string `json:"svg"`
-			}
-			if json.Unmarshal(body, &parsed) == nil && strings.Contains(parsed.SVG, "<svg") {
-				return parsed.SVG
+// sanitizeForAthletes removes private coaching content from a session shared
+// with athletes: agent traces, coach warnings, block notes and exercise cues.
+// Step 10 moves this to the new contract.
+func sanitizeForAthletes(doc map[string]interface{}) {
+	delete(doc, "agentTraces")
+	if tl, ok := doc["timeline"].(map[string]interface{}); ok {
+		delete(tl, "coachWarnings")
+		if blocks, ok := tl["blocks"].([]interface{}); ok {
+			for _, b := range blocks {
+				if bm, ok := b.(map[string]interface{}); ok {
+					delete(bm, "notes")
+				}
 			}
 		}
 	}
-	return generateDeterministicFallbackSVGQR(shareURL)
+	stripCues := func(list interface{}) {
+		if exercises, ok := list.([]interface{}); ok {
+			for _, ex := range exercises {
+				if em, ok := ex.(map[string]interface{}); ok {
+					delete(em, "cues")
+				}
+			}
+		}
+	}
+	if scaling, ok := doc["scaling"].(map[string]interface{}); ok {
+		stripCues(scaling["exercises"])
+	}
+	stripCues(doc["exercises"])
 }
 
-func generateDeterministicFallbackSVGQR(data string) string {
-	sum := sha256.Sum256([]byte(data))
-	var rects strings.Builder
-	grid := 21
-	cell := 10
-	margin := 20
-	size := grid*cell + margin*2
-
-	isFinder := func(r, c int) bool {
-		inTL := r < 7 && c < 7
-		inTR := r < 7 && c >= grid-7
-		inBL := r >= grid-7 && c < 7
-		return inTL || inTR || inBL
+// fetchQRFromRustMCP asks mcp-rust for the QR code of a share URL. Any failure
+// is returned; the gateway never draws a QR code itself.
+func (h *APIHandler) fetchQRFromRustMCP(ctx context.Context, shareURL string) (string, error) {
+	reqBody, err := json.Marshal(map[string]interface{}{"data": shareURL, "size": 256})
+	if err != nil {
+		return "", err
 	}
-
-	drawFinder := func(ox, oy int) {
-		rects.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="70" height="70" rx="6" fill="none" stroke="#CCFF00" stroke-width="10"/>`, ox, oy))
-		rects.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="30" height="30" rx="3" fill="#CCFF00"/>`, ox+20, oy+20))
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.McpRustURL+"/tools/qr", bytes.NewReader(reqBody))
+	if err != nil {
+		return "", err
 	}
-
-	drawFinder(margin, margin)
-	drawFinder(margin+(grid-7)*cell, margin)
-	drawFinder(margin, margin+(grid-7)*cell)
-
-	bitIdx := 0
-	for r := 0; r < grid; r++ {
-		for c := 0; c < grid; c++ {
-			if isFinder(r, c) {
-				continue
-			}
-			b := sum[(bitIdx/8)%len(sum)]
-			on := ((b >> (bitIdx % 8)) & 1) == 1
-			bitIdx++
-			if on {
-				x := margin + c*cell
-				y := margin + r*cell
-				rects.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="8" height="8" rx="2" fill="#F8FAFC"/>`, x+1, y+1))
-			}
-		}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.HttpClient.Do(req)
+	if err != nil {
+		return "", err
 	}
-
-	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="256" height="256"><rect width="100%%" height="100%%" rx="16" fill="#0B0F17"/>%s</svg>`, size, size, rects.String())
-}
-
-func (h *APIHandler) buildResilientSessionPlan(sessionID, coachID string, input models.SessionInput, routes map[string]models.EphemeralAgentRoute) map[string]interface{} {
-	title := input.Title
-	if title == "" {
-		lines := strings.Split(strings.TrimSpace(input.RawText), "\n")
-		if len(lines) > 0 && len(lines[0]) > 3 {
-			title = lines[0]
-			if len(title) > 68 {
-				title = title[:68] + "..."
-			}
-		} else {
-			title = "Custom Box WOD Session Plan"
-		}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
 	}
-
-	dur := input.TargetDurationMinutes
-	if dur <= 0 {
-		dur = 60
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("mcp-rust /tools/qr: status %d", resp.StatusCode)
 	}
-
-	warmupStyle := "Dynamic Game & Joint Prep Flow"
-	if strings.Contains(strings.ToLower(input.CoachConstraints), "broom") || strings.Contains(strings.ToLower(input.CoachConstraints), "pvc") {
-		warmupStyle = "Broomstick (PVC) Reaction Game + Mobility Flow"
+	var parsed struct {
+		SVG string `json:"svg"`
 	}
-
-	return map[string]interface{}{
-		"_id":       sessionID,
-		"sessionId": sessionID,
-		"coachId":   coachID,
-		"status":    "completed",
-		"title":     title,
-		"createdAt": time.Now().Format(time.RFC3339),
-		"input":     input,
-		"parsedWod": map[string]interface{}{
-			"blocks": []map[string]interface{}{
-				{"type": "strength", "name": "Skill & Strength Progression", "allocatedMinutes": 15},
-				{"type": "metcon", "name": "Primary Conditioning (Engine / Metcon)", "allocatedMinutes": 15},
-			},
-			"movements":     []string{"Front Squat", "Thruster", "Pull-Up"},
-			"primaryJoints": []string{"shoulders", "thoracic_spine", "hips", "knees", "wrists"},
-			"stimulus":      "High-output functional strength paired with metabolic conditioning.",
-		},
-		"warmup": map[string]interface{}{
-			"style":           warmupStyle,
-			"durationMinutes": 12,
-			"phases": []map[string]interface{}{
-				{
-					"name":            "Phase 1: PVC Broomstick Circle Drop & Switch (Reaction Game)",
-					"durationMinutes": 4,
-					"instructions":    "Athletes stand in a circle balancing a broomstick vertically. On Coach's cue ('LEFT', 'RIGHT', 'SPIN'), step and catch the next stick before it drops. Penalty = 3 synchronized jump squats!",
-					"coachingGoal":    "Put athletes in focus with a fun non-repetitive reaction game while raising core temperature.",
-				},
-				{
-					"name":            "Phase 2: Targeted Broomstick & Joint Prep",
-					"durationMinutes": 8,
-					"instructions":    "Coach-led progressive mobility flow targeting the WOD's primary joints.",
-					"coachingGoal":    "Prepare shoulders, thoracic spine, hips, and knees for full range of motion.",
-					"drills": []map[string]interface{}{
-						{"name": "PVC Pass-Throughs + Sotts Press", "reps": "10 + 5 reps", "focus": "Thoracic extension & overhead stability"},
-						{"name": "Broomstick Kang Squats", "reps": "8 slow reps", "focus": "Posterior chain activation + deep squat bottom posture"},
-						{"name": "Scapular Pulls + Kip Swings", "reps": "10 + 10 reps", "focus": "Shoulder girdle control & lat activation"},
-					},
-				},
-			},
-		},
-		"exercises": []map[string]interface{}{
-			{
-				"name":     "Thruster / Squat Pressing Pattern",
-				"category": "Primary Movement",
-				"cues": map[string]interface{}{
-					"external": []string{
-						"Point your elbow lasers straight at the front wall",
-						"Launch the bar off your shoulders using violent hip extension",
-						"Push the floor apart with your feet on the drive up",
-					},
-					"internal": []string{
-						"Take a 360-degree breath into your belt before descending",
-						"Squeeze glutes and quads hard before your arms press",
-					},
-					"commonFaults": []map[string]interface{}{
-						{"fault": "Elbows dropping at the bottom of the squat", "fix": "Cue: 'Chest proud, drive elbows toward the ceiling first'"},
-						{"fault": "Pressing early before hips finish extending", "fix": "Cue: 'Jump the bar off your shoulders—legs first, arms second'"},
-					},
-				},
-				"scaling": map[string]interface{}{
-					"rxPlus":         "Heavier loading or unbroken set requirement with 2-sec pause on first rep",
-					"scaled":         "Lighter barbell (65/45 lb) or Dual Dumbbell Thrusters (30/20 lb)",
-					"seniorsMasters": "Squat to 15\" Box target + Dual DB Push Press (joint-friendly depth & wrist angle)",
-					"injured": map[string]interface{}{
-						"wristOrShoulder": "Single-Arm DB Thruster (uninjured side) or Goblet Squat + Russian KB Swing",
-						"kneePain":        "Push Press from rack or Tempo Box Squat above parallel (vertical shins)",
-						"lowerBack":       "Light Dual DB Front Squat to Box with upright torso focus",
-					},
-				},
-			},
-			{
-				"name":     "Pull-Up / Gymnastics Pulling",
-				"category": "Gymnastics",
-				"cues": map[string]interface{}{
-					"external": []string{
-						"Push the bar away at the top so you swing right into the next rep",
-						"Glue your shoes together—press your chest through the window",
-					},
-					"internal": []string{
-						"Initiate from depressed shoulder blades (active lats), not bent knees",
-					},
-					"commonFaults": []map[string]interface{}{
-						{"fault": "Dropping straight down from the bar and losing kip rhythm", "fix": "Cue: 'Push away from the bar at the top like a pendulum'"},
-					},
-				},
-				"scaling": map[string]interface{}{
-					"rxPlus":         "Chest-to-Bar Pull-Ups or Bar Muscle-Ups",
-					"scaled":         "Banded Pull-Ups or Jumping Pull-Ups with 2-sec eccentric lower",
-					"seniorsMasters": "Strict Ring Rows (feet below rings, controlled tempo)",
-					"injured": map[string]interface{}{
-						"wristOrShoulder": "Neutral-Grip Ring Rows or Single-Arm DB Bent-Over Rows",
-						"kneePain":        "Strict/Banded Pull-Ups (step onto a box to dismount—no jumping impact)",
-						"lowerBack":       "Chest-Supported Incline Dumbbell Rows",
-					},
-				},
-			},
-		},
-		"timeline": map[string]interface{}{
-			"totalMinutes":      dur,
-			"feasibilityStatus": "OPTIMAL",
-			"coachWarnings": []string{
-				"Keep equipment transitions under 4 minutes by staging barbells and bands during the post-warmup water break.",
-			},
-			"blocks": []map[string]interface{}{
-				{"startMin": 0, "endMin": 4, "label": "Whiteboard Brief, Stimulus & Scaling Check", "type": "brief", "notes": "Check for any wrist, shoulder, or knee limitations right away."},
-				{"startMin": 4, "endMin": 16, "label": warmupStyle, "type": "warmup", "notes": "4m reaction game + 8m broomstick joint prep."},
-				{"startMin": 16, "endMin": 20, "label": "Transition: Barbell / Station Setup", "type": "transition", "notes": "Assign 2 athletes per rack."},
-				{"startMin": 20, "endMin": 35, "label": "Skill / Strength Block (15 min)", "type": "strength", "notes": "Every 2:30 x 6 working sets."},
-				{"startMin": 35, "endMin": 40, "label": "Transition: Metcon Weight Load & 1-Round Rehearsal", "type": "transition", "notes": "Verify everyone's scaling option can be completed within the time cap."},
-				{"startMin": 40, "endMin": dur - 6, "label": "Engine / Metcon Block", "type": "metcon", "notes": "Coach the room: external cues, pacing, and lumbar safety."},
-				{"startMin": dur - 6, "endMin": dur, "label": "Cooldown, Fist Bumps & Equipment Reset", "type": "cooldown", "notes": "Guided breathing + thoracic/lat stretch."},
-			},
-		},
-		"agentTraces": []map[string]interface{}{
-			{"agent": "WodParserAgent", "provider": routes["parser"].Provider, "model": routes["parser"].Model, "status": "completed"},
-			{"agent": "WarmupPlannerAgent", "provider": routes["warmup"].Provider, "model": routes["warmup"].Model, "mcpTool": "query_warmup_drills", "status": "completed"},
-			{"agent": "ScalingAndCuesAgent", "provider": routes["scaling"].Provider, "model": routes["scaling"].Model, "mcpTool": "get_movement_substitutions", "status": "completed"},
-			{"agent": "TimelineLogisticsAgent", "provider": routes["timeline"].Provider, "model": routes["timeline"].Model, "mcpTool": "validate_class_timeline", "status": "completed"},
-		},
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("mcp-rust /tools/qr: %w", err)
 	}
+	if !strings.Contains(parsed.SVG, "<svg") {
+		return "", errors.New("mcp-rust /tools/qr: response has no SVG")
+	}
+	return parsed.SVG, nil
 }

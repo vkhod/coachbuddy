@@ -27,7 +27,7 @@ Each service directory contains its own scoped `AGENTS.md` with stack-specific c
    - Never substitute canned, regex-generated or locally re-computed content when an LLM call, an MCP tool call or another service fails. Mark the affected step or plan section as failed, with the reason, so the coach can retry.
    - Fakes belong only in automated tests: recorded LLM responses (fixtures) and test doubles inside the test suites, never in application code paths.
    - The current code still contains such fallbacks (regex parser and canned content in `agents-python`, local MCP re-implementation in `app/mcp_client.py`, local plan builder in `web/pwa-nextjs/src/lib/api.ts`). They are removed during the redesign; do not add new ones.
-   - The databases (Postgres, MongoDB, Redis) are required in every environment; `compose.yml` provides them locally. The existing in-memory store fallback in `gateway-go` and the DB-less cold start in `mcp-rust` are removed during the redesign; do not add new ones. In-memory fakes belong only in tests.
+   - The databases (Postgres, MongoDB, Redis) are required in every environment; `compose.yml` provides them locally. `gateway-go` has no in-memory or file fallback (removed in Phase 2 step 6); the DB-less cold start in `mcp-rust` is removed in step 7. Do not add new ones. In-memory fakes belong only in tests.
    - Secrets have no defaults in code or compose files. Services refuse to start when a required secret is missing.
 2. **BYOK API Key Security (`AES-256-GCM`)**:
    - User LLM keys (`gemini`, `openai`, `anthropic`, `groq`) are encrypted at rest in `gateway-go` using AES-256-GCM with unique 12-byte nonces.

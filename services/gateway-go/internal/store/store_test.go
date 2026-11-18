@@ -1,151 +1,89 @@
 package store
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/coachbuddy/gateway-go/internal/crypto"
 	"github.com/coachbuddy/gateway-go/internal/models"
 )
 
-func newTestStore(t *testing.T) *DataStore {
-	vault, err := crypto.NewVault("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+const testMasterKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func testVault(t *testing.T) *crypto.Vault {
+	t.Helper()
+	v, err := crypto.NewVault(testMasterKey)
 	if err != nil {
-		t.Fatalf("failed to create vault: %v", err)
+		t.Fatalf("vault: %v", err)
 	}
-	ctx := context.Background()
-	return NewDataStore(ctx, vault, "", "", "", "")
+	return v
 }
 
-func TestBuildEphemeralRoutingConfig_Success(t *testing.T) {
-	ds := newTestStore(t)
-	ctx := context.Background()
-	coachID := "coach-test-111"
-
-	// 1. Save Primary Gemini Key
-	geminiKey := "AIzaSyD-TestGeminiKey12345"
-	_, err := ds.SaveAPIKey(ctx, coachID, "gemini", geminiKey, true)
+func encryptedKey(t *testing.T, v *crypto.Vault, coachID, provider, raw string, primary bool) *models.LLMAPIKey {
+	t.Helper()
+	ct, nonce, err := v.Encrypt(coachID, provider, raw)
 	if err != nil {
-		t.Fatalf("SaveAPIKey failed: %v", err)
+		t.Fatalf("encrypt: %v", err)
 	}
+	return &models.LLMAPIKey{CoachID: coachID, Provider: provider, EncryptedKey: ct, Nonce: nonce, IsPrimary: primary}
+}
 
-	// 2. Save Secondary OpenAI Key
-	openAIKey := "sk-proj-TestOpenAIKey99999"
-	_, err = ds.SaveAPIKey(ctx, coachID, "openai", openAIKey, false)
+func TestBuildRoutes_PrimaryAndOverride(t *testing.T) {
+	v := testVault(t)
+	coach := "coach-test-111"
+	keys := []*models.LLMAPIKey{
+		encryptedKey(t, v, coach, "gemini", "AIzaSyD-TestGeminiKey12345", true),
+		encryptedKey(t, v, coach, "openai", "sk-proj-TestOpenAIKey99999", false),
+	}
+	prefs := []*models.AgentModelPref{{AgentRole: "warmup", Provider: "openai", ModelIdentifier: "openai/gpt-4o"}}
+
+	routes, err := buildRoutes(v, coach, keys, prefs)
 	if err != nil {
-		t.Fatalf("SaveAPIKey openai failed: %v", err)
+		t.Fatal(err)
 	}
-
-	// 3. Configure Warmup Agent to use OpenAI
-	_, err = ds.SaveAgentPrefs(ctx, coachID, []models.AgentModelPref{
-		{
-			AgentRole:       "warmup",
-			Provider:        "openai",
-			ModelIdentifier: "openai/gpt-4o",
-		},
-	})
-	if err != nil {
-		t.Fatalf("SaveAgentPrefs failed: %v", err)
+	if r := routes["parser"]; r.Provider != "gemini" || r.APIKey != "AIzaSyD-TestGeminiKey12345" || r.Model != DefaultModel {
+		t.Errorf("parser should use the primary gemini key, got %+v", r)
 	}
-
-	// 4. Build routing config
-	routes, err := ds.BuildEphemeralRoutingConfig(ctx, coachID)
-	if err != nil {
-		t.Fatalf("BuildEphemeralRoutingConfig returned error: %v", err)
+	if r := routes["warmup"]; r.Provider != "openai" || r.APIKey != "sk-proj-TestOpenAIKey99999" || r.Model != "openai/gpt-4o" {
+		t.Errorf("warmup should use the openai override, got %+v", r)
 	}
-
-	// Parser should default to Primary (Gemini)
-	if routes["parser"].Provider != "gemini" || routes["parser"].APIKey != geminiKey {
-		t.Errorf("expected parser to use gemini primary key, got %+v", routes["parser"])
-	}
-
-	// Warmup should use OpenAI override
-	if routes["warmup"].Provider != "openai" || routes["warmup"].APIKey != openAIKey {
-		t.Errorf("expected warmup to use openai override key, got %+v", routes["warmup"])
+	if len(routes) != len(AgentRoles) {
+		t.Errorf("expected a route for every role, got %d", len(routes))
 	}
 }
 
-func TestBuildEphemeralRoutingConfig_NoKeysError(t *testing.T) {
-	ds := newTestStore(t)
-	ctx := context.Background()
-	coachID := "coach-empty-no-keys"
+func TestBuildRoutes_ChosenProviderWithoutKeyUsesPrimary(t *testing.T) {
+	v := testVault(t)
+	coach := "coach-1"
+	keys := []*models.LLMAPIKey{encryptedKey(t, v, coach, "anthropic", "sk-ant-x", true)}
+	prefs := []*models.AgentModelPref{{AgentRole: "scaling", Provider: "groq", ModelIdentifier: "groq/some-model"}}
 
-	_, err := ds.BuildEphemeralRoutingConfig(ctx, coachID)
-	if err == nil {
-		t.Fatal("expected error when no API keys are configured, got nil")
-	}
-}
-
-func TestListSessions_CoachIsolationAndImageStripping(t *testing.T) {
-	ds := newTestStore(t)
-	ctx := context.Background()
-
-	coachA := "coach-alpha"
-	coachB := "coach-beta"
-
-	// Save session for Coach A with large imageBase64
-	_ = ds.SaveSession(ctx, "session-a1", map[string]interface{}{
-		"coachId":   coachA,
-		"createdAt": time.Now().Format(time.RFC3339),
-		"title":     "Alpha WOD",
-		"input": map[string]interface{}{
-			"rawText":     "5 Rounds for time",
-			"imageBase64": "data:image/jpeg;base64,HUGE_IMAGE_STRING_THAT_SHOULD_BE_STRIPPED",
-		},
-	})
-
-	// Save session for Coach B
-	_ = ds.SaveSession(ctx, "session-b1", map[string]interface{}{
-		"coachId":   coachB,
-		"createdAt": time.Now().Format(time.RFC3339),
-		"title":     "Beta WOD",
-		"input": map[string]interface{}{
-			"rawText": "AMRAP 20",
-		},
-	})
-
-	// List sessions for Coach A
-	listA, err := ds.ListSessions(ctx, coachA)
+	routes, err := buildRoutes(v, coach, keys, prefs)
 	if err != nil {
-		t.Fatalf("ListSessions failed: %v", err)
+		t.Fatal(err)
 	}
-	if len(listA) != 1 {
-		t.Fatalf("expected 1 session for Coach A, got %d", len(listA))
-	}
-	if listA[0]["title"] != "Alpha WOD" {
-		t.Errorf("expected Alpha WOD, got %v", listA[0]["title"])
-	}
-
-	// Verify imageBase64 is stripped in list view
-	inputMap, ok := listA[0]["input"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected input map")
-	}
-	if _, exists := inputMap["imageBase64"]; exists {
-		t.Errorf("expected imageBase64 to be stripped from session list view")
+	if r := routes["scaling"]; r.Provider != "anthropic" || r.Model != defaultModelFor("anthropic") {
+		t.Errorf("expected the anthropic primary and its model, got %+v", r)
 	}
 }
 
-func TestSharedLink_ExpiryCheck(t *testing.T) {
-	ds := newTestStore(t)
-	ctx := context.Background()
-
-	pastTime := time.Now().Add(-1 * time.Hour)
-	expiredLink := &models.SharedLink{
-		ShortCode:         "expired-123",
-		MongoSessionID:    "session-xyz",
-		CoachID:           "coach-1",
-		IncludeCoachNotes: false,
-		ExpiresAt:         &pastTime,
-		ViewCount:         0,
-		CreatedAt:         time.Now().Add(-2 * time.Hour),
+func TestBuildRoutes_NoUsableKeyIsAnError(t *testing.T) {
+	v := testVault(t)
+	if _, err := buildRoutes(v, "coach-1", nil, defaultAgentPrefs()); err == nil {
+		t.Fatal("expected an error with no keys")
 	}
+	// A key encrypted for another coach does not decrypt, so it does not count.
+	other := encryptedKey(t, v, "coach-2", "gemini", "AIza-other", true)
+	if _, err := buildRoutes(v, "coach-1", []*models.LLMAPIKey{other}, nil); err == nil {
+		t.Fatal("expected an error when no key decrypts for this coach")
+	}
+}
 
-	_ = ds.SaveSharedLink(ctx, expiredLink)
-
-	_, err := ds.GetSharedLink(ctx, "expired-123")
-	if err == nil {
-		t.Fatal("expected expired link to return error")
+func TestOrderPrefs_FollowsAgentRoles(t *testing.T) {
+	got := orderPrefs([]*models.AgentModelPref{{AgentRole: "timeline"}, {AgentRole: "global"}, {AgentRole: "warmup"}})
+	want := []string{"global", "warmup", "timeline"}
+	for i, p := range got {
+		if p.AgentRole != want[i] {
+			t.Fatalf("order: got %s at %d, want %s", p.AgentRole, i, want[i])
+		}
 	}
 }
