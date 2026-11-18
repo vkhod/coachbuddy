@@ -15,7 +15,7 @@ Each service directory contains its own scoped `AGENTS.md` with stack-specific c
 | **Coach PWA & Share UI** | `web/pwa-nextjs` | `:3000` | TypeScript, Next.js 14 (App Router), Tailwind CSS | [web/pwa-nextjs/AGENTS.md](web/pwa-nextjs/AGENTS.md) |
 | **API Gateway & Key Vault** | `services/gateway-go` | `:8080` | Go 1.27, PostgreSQL (`pgx`), MongoDB, Redis | [services/gateway-go/AGENTS.md](services/gateway-go/AGENTS.md) |
 | **Multi-Agent Orchestrator** | `services/agents-python` | `:8081` | Python 3.12+, FastAPI, Google ADK, LiteLLM | [services/agents-python/AGENTS.md](services/agents-python/AGENTS.md) |
-| **Domain MCP Server** | `services/mcp-rust` | `:8082` | Rust, Axum, Tokio, MCP (`JSON-RPC 2.0`) | [services/mcp-rust/AGENTS.md](services/mcp-rust/AGENTS.md) |
+| **Domain MCP Server** | `services/mcp-rust` | `:8082` | Rust, Axum, Tokio, MCP Streamable HTTP (`rmcp`) | [services/mcp-rust/AGENTS.md](services/mcp-rust/AGENTS.md) |
 | **Data & Infra** | `compose.yml`, `compose.dev.yml`, `infra/` | `:5432`, `:27017`, `:6379` | PostgreSQL 16, MongoDB 7, Redis 7 | — |
 
 ---
@@ -27,7 +27,7 @@ Each service directory contains its own scoped `AGENTS.md` with stack-specific c
    - Never substitute canned, regex-generated or locally re-computed content when an LLM call, an MCP tool call or another service fails. Mark the affected step or plan section as failed, with the reason, so the coach can retry.
    - Fakes belong only in automated tests: recorded LLM responses (fixtures) and test doubles inside the test suites, never in application code paths.
    - The current code still contains such fallbacks (regex parser and canned content in `agents-python`, local MCP re-implementation in `app/mcp_client.py`, local plan builder in `web/pwa-nextjs/src/lib/api.ts`). They are removed during the redesign; do not add new ones.
-   - The databases (Postgres, MongoDB, Redis) are required in every environment; `compose.yml` provides them locally. `gateway-go` has no in-memory or file fallback (removed in Phase 2 step 6); the DB-less cold start in `mcp-rust` is removed in step 7. Do not add new ones. In-memory fakes belong only in tests.
+   - The databases (Postgres, MongoDB, Redis) are required in every environment; `compose.yml` provides them locally. `gateway-go` has no in-memory or file fallback (removed in Phase 2 step 6) and `mcp-rust` does not start without MongoDB (step 7). Do not add new ones. In-memory fakes belong only in tests.
    - Secrets have no defaults in code or compose files. Services refuse to start when a required secret is missing.
 2. **BYOK API Key Security (`AES-256-GCM`)**:
    - User LLM keys (`gemini`, `openai`, `anthropic`, `groq`) are encrypted at rest in `gateway-go` using AES-256-GCM with unique 12-byte nonces.

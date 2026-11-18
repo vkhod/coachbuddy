@@ -72,6 +72,14 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+    # /health answers 503 when MongoDB is down. The image has no curl or wget,
+    # so the binary checks itself.
+    healthcheck:
+      test: ["CMD", "/app/coachbuddy-mcp-rust", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
   agents-python:
     build:
@@ -89,7 +97,7 @@ services:
       redis:
         condition: service_healthy
       mcp-rust:
-        condition: service_started
+        condition: service_healthy
 
   gateway-go:
     build:
@@ -118,7 +126,7 @@ services:
       agents-python:
         condition: service_started
       mcp-rust:
-        condition: service_started
+        condition: service_healthy
     # /health answers 503 when Postgres, MongoDB, Redis or mcp-rust is down.
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
