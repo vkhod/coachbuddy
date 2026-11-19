@@ -150,7 +150,7 @@ async def test_missing_warmup_makes_the_timeline_provisional():
 async def test_provider_error_on_the_parser_fails_every_section_that_needs_the_wod():
     models = ReplayModels(script(parser=[RuntimeError("litellm.ServiceUnavailableError: GeminiException - overloaded (key test-key-123)")]))
     doc = await run(models)
-    assert states(doc) == {"wod": "failed", "warmup": "failed", "parts": "failed", "injuries": "skipped", "timeline": "failed"}
+    assert states(doc) == {"wod": "failed", "warmup": "failed", "parts": "failed", "injuries": "failed", "timeline": "failed"}
     assert "overloaded" in doc["sectionStatus"]["wod"]["error"]
     assert "test-key-123" not in doc["sectionStatus"]["wod"]["error"]
     assert doc["sectionStatus"]["warmup"]["error"] == "the WOD could not be read, so this section was not built"
@@ -226,4 +226,95 @@ async def test_live_gemini_recording_replays_into_a_valid_plan():
     assert [p["minutes"] for p in doc["wod"]["parts"]] == [9, 10, 20]
     engine = [p for p in doc["parts"] if p["partId"] == "C"][0]
     assert engine["layout"] == "grid" and len(engine["columns"]) == 4
-    assert all(r["attempts"] == 1 for r in doc["agentRuns"])
+    runs = {r["section"]: r for r in doc["agentRuns"]}
+    assert runs["injuries"]["state"] == "skipped" and runs["injuries"]["attempts"] == 0
+    assert all(r["attempts"] == 1 for r in runs.values() if r["state"] == "done")
+
+
+# --- Step 9: today groups and injuries ------------------------------------------------
+
+TWO_INJURIES = "senior athlete today. ankle injury returning after 2 weeks, one shoulder tear"
+
+
+def injury_script(**overrides):
+    rec = load_recording("senior-two-injuries-60.json")
+    rec.update(overrides)
+    return copy.deepcopy(rec)
+
+
+async def test_two_injuries_give_two_blocks_and_the_today_group():
+    """Done-when check: a comment with two injuries gives two injury blocks and the today groups."""
+    events = []
+    models = ReplayModels(injury_script())
+    doc = await run(models, req=request(comment=TWO_INJURIES), events=events)
+
+    plan = Plan.model_validate({k: v for k, v in doc.items() if k not in ("agentRuns", "orchestrationLatencyMs")})
+    assert states(doc) == {"wod": "done", "warmup": "done", "parts": "done", "injuries": "done", "timeline": "done"}
+    assert [(t.label, t.tier.value, t.count) for t in plan.today] == [("Senior", "senior", 1)]
+    assert [i.label for i in plan.injuries] == ["Ankle", "Shoulder"]
+    ankle = plan.injuries[0]
+    assert ankle.returnNote == "returning after 2 weeks" and ankle.fromComment == "ankle injury returning after 2 weeks"
+    assert {i.caution for i in plan.injuries} == {"Suggestion only. Check with the athlete; stop on pain."}
+    assert [p.partId for p in plan.injuries[1].parts] == ["A", "B", "C"]
+    assert ("injuries", "done") in [(e["section"], e["state"]) for e in events]
+
+
+async def test_no_injuries_means_no_injury_call():
+    models = ReplayModels(script())
+    doc = await run(models)
+    assert states(doc)["injuries"] == "skipped"
+    assert "injuries" not in doc and "today" not in doc
+    assert models.models["injury"].requests == []
+
+
+async def test_injury_agent_sees_warmup_and_injuries_but_not_the_screenshot():
+    models = ReplayModels(injury_script())
+    await run(models, req=request(comment=TWO_INJURIES))
+    injury = models.models["injury"]
+    assert injury.inline_parts() == []
+    prompt = injury.instructions()[0]
+    assert '"label": "Ankle"' in prompt and "Partner mirror game" in prompt
+
+
+async def test_today_groups_reach_warmup_and_scaling():
+    models = ReplayModels(injury_script())
+    await run(models, req=request(comment=TWO_INJURIES))
+    for role in ("warmup", "scaling"):
+        assert '"tier": "senior"' in models.models[role].instructions()[0], role
+
+
+async def test_injury_answer_in_the_wrong_order_is_repaired():
+    good = injury_script()["injury"][0]
+    swapped = {"injuries": list(reversed(good["injuries"]))}
+    models = ReplayModels(injury_script(injury=[swapped, good]))
+    doc = await run(models, req=request(comment=TWO_INJURIES))
+    assert states(doc)["injuries"] == "done"
+    assert "expected one entry per injury in this order ['Ankle', 'Shoulder']" in models.models["injury"].instructions()[1]
+
+
+async def test_injury_for_a_part_that_does_not_exist_fails_after_one_repair():
+    bad = injury_script()["injury"][0]
+    bad["injuries"][0]["parts"].append({"partId": "D", "suggestion": "Skip"})
+    models = ReplayModels(injury_script(injury=[bad, copy.deepcopy(bad)]))
+    doc = await run(models, req=request(comment=TWO_INJURIES))
+    assert states(doc)["injuries"] == "failed" and states(doc)["timeline"] == "done"
+    assert "injuries[0] (Ankle).parts: no WOD part with id D" in doc["sectionStatus"]["injuries"]["error"]
+    assert "injuries" not in doc
+
+
+async def test_injuries_still_run_when_the_warmup_failed():
+    bad = dict(injury_script()["warmup"][0], minutes="x")
+    models = ReplayModels(injury_script(warmup=[bad, bad]))
+    doc = await run(models, req=request(comment=TWO_INJURIES))
+    assert states(doc)["warmup"] == "failed" and states(doc)["injuries"] == "done"
+    assert "Warm-up: not planned yet" in models.models["injury"].instructions()[0]
+
+
+async def test_injury_role_has_its_own_route():
+    routes = {
+        "global": EphemeralAgentRoute(provider="gemini", model="gemini/gemini-3.8-flash", apiKey="g-key"),
+        "injury": EphemeralAgentRoute(provider="anthropic", model="anthropic/claude-sonnet-5-5", apiKey="a-key"),
+    }
+    models = ReplayModels(injury_script())
+    await run(models, req=request(comment=TWO_INJURIES, routes=routes))
+    assert models.models["injury"].model == "anthropic/claude-sonnet-5-5"

@@ -47,7 +47,7 @@ var (
 )
 
 // AgentRoles lists the roles that can have their own model routing, in display order.
-var AgentRoles = []string{"global", "parser", "warmup", "scaling", "timeline"}
+var AgentRoles = []string{"global", "parser", "warmup", "scaling", "injury", "timeline"}
 
 const (
 	sessionsCollection = "wod_sessions"

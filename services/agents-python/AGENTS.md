@@ -7,7 +7,7 @@
 - `app/main.py`: FastAPI app. `GET /health`, `GET /api/v1/topology`, `POST /api/v1/orchestrate` (internal token required). Publishes section events to Redis for the gateway's SSE endpoint.
 - `app/pipeline.py`: builds the ADK `Workflow` per request and assembles the plan document.
 - `app/agents/sections.py`: one `SectionAgent` per plan section. It runs the section's `LlmAgent`, checks the answer, asks for one repair, or marks the section failed.
-- `app/agents/prompts.py`: the instructions. `app/agents/outputs.py`: what each agent answers, built from the contract types. `app/agents/schema_for_model.py`: the schema sent to the model.
+- `app/agents/prompts.py`: the instructions (Parser, Warm-up, Scaling, Injury, Timeline). `app/agents/outputs.py`: what each agent answers, built from the contract types. `app/agents/schema_for_model.py`: the schema sent to the model.
 - `app/llm.py`: routes (provider, model, key per role, from the gateway's `routingConfig`) and the `LiteLlm` factory.
 - `app/mcp_tools.py`: the mcp-rust tools through ADK's `McpToolset` (Streamable HTTP).
 - `app/contract/`: generated from `schema/` (do not edit), plus `rules.py`, the cross-field rules.
@@ -17,15 +17,18 @@
 ## 2. Pipeline
 
 ```
-START -> WodParserAgent -> WarmupPlannerAgent --+
-                        -> ScalingAgent       --+-> TimelineAgent
+START -> WodParserAgent -> WarmupPlannerAgent --+           +-> InjuryAgent (only with injuries)
+                        -> ScalingAgent       --+-> join  --+-> TimelineAgent
 ```
 
 - ADK `Workflow` (2.14.1 deprecates `SequentialAgent`/`ParallelAgent`; capability report, decision 5.1). Warm-up and Scaling run in parallel.
 - One `LlmAgent` per role, each with its own `LiteLlm(model, api_key=...)` built for this request. Keys never go into `os.environ`.
 - Only the parser sees the screenshot. The others get earlier sections from session state as JSON.
 - The pipeline calls the mcp-rust tools itself (decision 5.2): `get_recent_coaching_history` before the warm-up, `verify_timeline_math` after the timeline answer.
-- The Injury agent and the "today" groups come in step 9; until then `sectionStatus.injuries` is `skipped`.
+- The parser also reads the comment: `today` (who needs attention, mapped to a tier row) and one injury mention per injury (label, the comment's words, a return note). No names.
+- Warm-up and Scaling see the `today` groups. The Injury agent sees the WOD, the warm-up (or "not planned yet") and the mentions, and writes one warm-up line and per-part suggestions per injury.
+- The pipeline, not the model, fills each injury's `label`, `fromComment`, `returnNote` and the fixed `caution` ("Suggestion only. Check with the athlete; stop on pain."). The model's entries must match the mentions in order.
+- No injuries in the comment: `sectionStatus.injuries` is `skipped` and the Injury agent is not called.
 
 ## 3. Checks, repair and failure (D3)
 

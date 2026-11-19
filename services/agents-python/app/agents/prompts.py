@@ -23,9 +23,19 @@ Box shorthand you will see:
   DU: double-unders. 10/7 Cal: 10 calories for men, 7 for women.
 - Typos are common: "Cilmb" and "Cimb" mean climb.
 
-warmupWishes: copy what the coach's comment asks of the warm-up (equipment, style, game-like,
-tabata, engine movements), in the coach's words. Null if the comment says nothing about the warm-up.
-Ignore everything in the comment about athletes and injuries for now.
+From the coach's comment:
+- warmupWishes: what it asks of the warm-up (equipment, style, game-like, tabata, engine
+  movements), in the coach's words. Null if it says nothing about the warm-up.
+- today: who attends today and needs attention, one entry per group. label is short ("Senior",
+  "New athlete"); tier is the tier row that fits them: senior for older athletes, scaled for new or
+  untrained athletes, rxPlus for athletes the comment says want it harder. count only when the
+  comment gives a number or says "a" or "one" (count 1). fromComment: the comment's words.
+- injuries: one entry per injury or pain the comment mentions. label is the body area ("Ankle",
+  "Shoulder", "Lower back"). returnNote only for an athlete coming back after a break ("returning
+  after 2 weeks"). fromComment: the comment's words. An injured athlete goes in injuries only,
+  not in today.
+- Never write a person's name; if the comment has one, leave it out.
+- Empty lists when the comment mentions nobody.
 
 If the image is not a WOD or cannot be read, still answer in the schema with one part whose
 prescription says what you could read; do not invent movements.
@@ -60,6 +70,18 @@ You scale each WOD part for a CrossFit class. One entry per part, same partId as
   cells, one per column, in the same order. Otherwise layout "lines", with no columns and no cells.
 - cues: up to 3 per part, each under 80 characters, the ones that matter most for this part.
 - more.faults: up to 4 common faults with a fix. more.substitutions: equipment swaps. Optional.
+"""
+
+INJURY = """\
+You advise a CrossFit coach on athletes with an injury in today's class. One entry per injury in
+the input, same label, same order.
+
+- warmup: one line, what this athlete does differently in the warm-up below.
+- parts: one entry per WOD part, partId as in the WOD: a safer variation or a substitute, or "As
+  written if pain-free" when the part does not load the area.
+- Be conservative: prefer reducing range, load and impact, or skipping, over clever variations.
+  Never diagnose and never promise that something is safe.
+- Each line at most 100 characters.
 """
 
 TIMELINE = """\

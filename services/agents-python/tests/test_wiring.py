@@ -31,7 +31,7 @@ class SpyClient(LiteLLMClient):
         import json
 
         self.calls.append({"model": model, "messages": messages, "kwargs": kwargs})
-        role = {"WodParserAgent": "parser", "WarmupPlannerAgent": "warmup", "ScalingAgent": "scaling", "TimelineAgent": "timeline"}
+        role = {"WodParserAgent": "parser", "WarmupPlannerAgent": "warmup", "ScalingAgent": "scaling", "InjuryAgent": "injury", "TimelineAgent": "timeline"}
         system = messages[0]["content"] if messages and messages[0]["role"] == "system" else ""
         name = next(n for n in role if f'"{n}"' in str(system))
         answer = self.answers[role[name]].pop(0)
