@@ -29,7 +29,9 @@
           }
         ]
       },
-      "warmupWishes": null
+      "warmupWishes": null,
+      "today": [],
+      "injuries": []
     }
   ],
   "warmup": [

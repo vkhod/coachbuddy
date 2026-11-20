@@ -384,6 +384,11 @@ class InjurySection(SectionAgent):
             )
             for m, a in zip(mentions, out.injuries)
         ]
+        # Not enforced on purpose (decided 2026-11-20, revisit with live feedback): one
+        # suggestion for every WOD part per injury. The Phase 1 decision shows a row per
+        # part, and the instruction asks for one ("As written if pain-free"), but forcing
+        # it could make the model invent substitutions where none is needed. A part with
+        # no entry is shown as having no change.
         problems += check_plan_rules(_rules_plan(Wod.model_validate(state["wod"]), injuries=injuries))
         return [i.model_dump(mode="json", exclude_none=True) for i in injuries], problems
 
