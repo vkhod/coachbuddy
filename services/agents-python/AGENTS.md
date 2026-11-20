@@ -39,6 +39,7 @@ START -> WodParserAgent -> WarmupPlannerAgent --+           +-> InjuryAgent (onl
 5. A section that needs the WOD fails when the parser failed. Without a warm-up, the timeline reserves 12 minutes and is marked `provisional`.
 6. Never fill a section with local content. Tests use recorded answers in `tests/`, never fallback code in `app/`.
 7. Errors shown to the coach are at most 300 characters and never contain the key.
+8. Fields an agent must always decide (the parser's `today`, `injuries`, `warmupWishes`) are required in its output model, empty allowed. An optional field with a default can be left out by the model and then reads as "nothing" (seen live with Gemini, 2026-11-20).
 
 ## 4. Commands
 

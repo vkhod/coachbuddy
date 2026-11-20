@@ -19,13 +19,18 @@ class InjuryMention(BaseModel):
 
 
 class ParserOut(BaseModel):
+    """Every field is required, empty lists included. Live on 2026-11-20 Gemini left out an
+    optional `injuries` key for "Today injured ankle will join after two weeks leave", and a
+    default of [] turned that into "no injuries". A missing key is now a validation error
+    and goes back to the model as a repair."""
+
     model_config = ConfigDict(extra="forbid")
     wod: Wod
     warmupWishes: constr(max_length=200) | None = Field(
-        None, description="What the coach's comment asks of the warm-up, in the coach's words. Null if nothing."
+        ..., description="What the coach's comment asks of the warm-up, in the coach's words. Null if nothing."
     )
-    today: list[TodayGroup] = Field(default_factory=list, max_length=6)
-    injuries: list[InjuryMention] = Field(default_factory=list, max_length=6)
+    today: list[TodayGroup] = Field(..., max_length=6, description="Empty list when the comment names nobody.")
+    injuries: list[InjuryMention] = Field(..., max_length=6, description="Empty list when the comment names no injury.")
 
 
 class InjuryAdvice(BaseModel):

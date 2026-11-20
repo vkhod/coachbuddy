@@ -1,0 +1,344 @@
+{
+  "_note": "Captured live on 2026-11-20 from gemini/gemini-3.8-flash through LiteLlm: Screenshot_20261114-223913.png (WOD 18/11/26), comment 'senior athlete today. ankle injury returning after 2 weeks, one shoulder tear', 60 minutes.",
+  "parser": [
+    {
+      "wod": {
+        "title": "Power Clean, Front Squat, Pendlay Row & Engine EMOM",
+        "parts": [
+          {
+            "id": "A",
+            "name": "Build a",
+            "kind": "strength",
+            "prescription": "E1.5 x 6\n2 BB Power Clean + 2 Front Squat @ 75%",
+            "minutes": 9
+          },
+          {
+            "id": "B",
+            "name": "Build b",
+            "kind": "strength",
+            "prescription": "Heavy BB \"Pendlay\" Row - Descending reps: 8-8-6-6 (Go heavier each set)\nb/t sets: 30's Heavy Plank Hold",
+            "minutes": 10
+          },
+          {
+            "id": "C",
+            "name": "Engine",
+            "kind": "conditioning",
+            "prescription": "20min EMOM (5 rounds)\n1st min - 8 Burpees\n2nd min - 16 Russian KB Swings\n3rd min - 24 Sit-ups\n4th min - 64 Double Unders",
+            "minutes": 20
+          }
+        ],
+        "date": "2026-11-18"
+      },
+      "injuries": [
+        {
+          "label": "Ankle",
+          "fromComment": "ankle injury returning after 2 weeks",
+          "returnNote": "returning after 2 weeks"
+        },
+        {
+          "label": "Shoulder",
+          "fromComment": "one shoulder tear",
+          "returnNote": null
+        }
+      ],
+      "today": [
+        {
+          "label": "Senior",
+          "tier": "senior",
+          "fromComment": "senior athlete today",
+          "count": null
+        }
+      ],
+      "warmupWishes": null
+    }
+  ],
+  "warmup": [
+    {
+      "minutes": 11,
+      "targets": [
+        {
+          "area": "Ankles & Calves",
+          "why": "Preps front squat depth in A and double under bounding in C"
+        },
+        {
+          "area": "Thoracic Spine & Wrists",
+          "why": "Essential for front rack hold in A and posture in B"
+        },
+        {
+          "area": "Posterior Chain & Hips",
+          "why": "Primes hinge for power cleans in A and KB swings in C"
+        },
+        {
+          "area": "Shoulders & Core",
+          "why": "Stabilizes plank holds in B and burpee press in C"
+        }
+      ],
+      "blocks": [
+        {
+          "name": "General Flow & Temperature",
+          "minutes": 3,
+          "items": [
+            "2 rounds: 30s single unders or jumping jacks, 30s bird-dogs",
+            "10 alternating world's greatest stretches with thoracic rotation",
+            "10 air squats with a 2-second pause in the bottom"
+          ]
+        },
+        {
+          "name": "Mobility & Positional Activation",
+          "minutes": 4,
+          "items": [
+            "8 banded ankle rocks per side over toes",
+            "8 deep squat pry stretches with active tall chest",
+            "10 PVC front rack elbow rotations per side",
+            "10 light Russian kettlebell swings focusing on snap"
+          ]
+        },
+        {
+          "name": "Barbell Specific Primer",
+          "minutes": 4,
+          "items": [
+            "5 empty bar clean deadlifts + 5 hang muscle cleans",
+            "5 front squats with slow tempo and high elbows",
+            "5 Pendlay rows focusing on flat back and bar path",
+            "3 power cleans + 2 front squats at light working prep"
+          ]
+        }
+      ]
+    }
+  ],
+  "scaling": [
+    {
+      "parts": [
+        {
+          "partId": "A",
+          "layout": "lines",
+          "tiers": {
+            "rx": {
+              "line": "E1.5M x 6: 2 Power Cleans + 2 Front Squats @ 75%"
+            },
+            "scaled": {
+              "line": "E1.5M x 6: 2 Hang Power Cleans + 2 Front Squats @ moderate load"
+            },
+            "senior": {
+              "line": "E1.5M x 6: 2 Dumbbell Hang Cleans + 2 DB Goblet Squats (light-moderate)"
+            },
+            "rxPlus": null
+          },
+          "cues": [
+            "Keep elbows fast and high on both the clean catch and the front squats.",
+            "Maintain a tight midsection and upright torso when driving out of the squat."
+          ],
+          "columns": null,
+          "more": {
+            "faults": [
+              {
+                "fault": "Catching cleans with elbows down, dropping forward in squats",
+                "fix": "Rotate elbows high and fast into the front rack before descending."
+              }
+            ],
+            "substitutions": [
+              "Dumbbells or kettlebells for wrist/shoulder mobility limits."
+            ]
+          }
+        },
+        {
+          "partId": "B",
+          "layout": "lines",
+          "tiers": {
+            "rx": {
+              "line": "Pendlay Row 8-8-6-6 (build to heavy) / b/t sets: 30s Weighted Plank Hold"
+            },
+            "scaled": {
+              "line": "Barbell Bent-Over Row 8-8-6-6 (moderate) / b/t sets: 30s Plank Hold"
+            },
+            "senior": {
+              "line": "DB Chest-Supported or Bent Row 8-8-8-8 / b/t sets: 20-30s Elevated Plank"
+            },
+            "rxPlus": null
+          },
+          "cues": [
+            "Reset bar on the floor each rep of Pendlay rows; keep spine flat.",
+            "Squeeze shoulder blades at top without using excessive hip kick."
+          ],
+          "columns": null,
+          "more": {
+            "faults": [
+              {
+                "fault": "Rounding low back or jerking chest upright to lift load",
+                "fix": "Hinge hips deep, brace abdomen, and pull strictly with back and arms."
+              }
+            ],
+            "substitutions": [
+              "Chest-supported dumbbell rows to protect lower back."
+            ]
+          }
+        },
+        {
+          "partId": "C",
+          "layout": "grid",
+          "tiers": {
+            "rx": {
+              "line": "EMOM 20: 8 Burpees / 16 Russian Swings (24/16kg) / 24 Sit-ups / 64 Double Unders",
+              "cells": [
+                "8 Burpees",
+                "16 Swings (24/16 kg)",
+                "24 Sit-ups",
+                "64 Double Unders"
+              ]
+            },
+            "scaled": {
+              "line": "EMOM 20: 6 Burpees / 14 Russian Swings (16/12kg) / 18 Sit-ups / 45 Single Unders",
+              "cells": [
+                "6 Burpees",
+                "14 Swings (16/12 kg)",
+                "18 Sit-ups",
+                "45 Single Unders"
+              ]
+            },
+            "senior": {
+              "line": "EMOM 20: 5 Elevated Burpees / 12 Light Swings / 12 Sit-ups / 30 Plate Hops",
+              "cells": [
+                "5 Elevated Burpees",
+                "12 Swings (light)",
+                "12 Abmat Sit-ups",
+                "30 Low Plate Hops"
+              ]
+            },
+            "rxPlus": {
+              "line": "EMOM 20: 10 Burpees / 20 Russian Swings (32/24kg) / 20 GHD Sit-ups / 75 Double Unders",
+              "cells": [
+                "10 Burpees",
+                "20 Swings (32/24 kg)",
+                "20 GHD Sit-ups",
+                "75 Double Unders"
+              ]
+            }
+          },
+          "cues": [
+            "Aim for 15-20s of rest every minute; pace reps steadily from minute 1.",
+            "Snap hips powerfully on swings so arms guide the kettlebell effortlessly."
+          ],
+          "columns": [
+            "Burpees",
+            "Russian KB Swings",
+            "Sit-ups",
+            "Double Unders"
+          ],
+          "more": {
+            "faults": [
+              {
+                "fault": "Squatting the kettlebell swing instead of hinging at the hips",
+                "fix": "Push hips back with soft knees and snap glutes forward to float bell."
+              }
+            ],
+            "substitutions": [
+              "Plate hops or bike calories for double unders to accommodate ankles."
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "injury": [
+    {
+      "injuries": [
+        {
+          "label": "Ankle",
+          "warmup": "Replace jumping with easy bike erg; keep ankle mobilizations strictly pain-free.",
+          "parts": [
+            {
+              "partId": "A",
+              "suggestion": "Hang power clean into box squat; reduce load and avoid aggressive foot stomp."
+            },
+            {
+              "partId": "B",
+              "suggestion": "As written if pain-free; maintain flat foot stance without heel lift."
+            },
+            {
+              "partId": "C",
+              "suggestion": "Step-back burpees without jumping; sub double unders with low-impact bike erg."
+            }
+          ]
+        },
+        {
+          "label": "Shoulder",
+          "warmup": "Skip overhead PVC work; do light band pull-aparts and gentle unweighted mobility.",
+          "parts": [
+            {
+              "partId": "A",
+              "suggestion": "Clean deadlifts + front squat with crossed-arm grip or safety squat bar if needed."
+            },
+            {
+              "partId": "B",
+              "suggestion": "Lighter Pendlay rows or chest-supported rows; sub plank hold with hollow hold."
+            },
+            {
+              "partId": "C",
+              "suggestion": "No-pushup burpees to a box; light Russian swings below eye level or KB deadlifts."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "timeline": [
+    {
+      "blocks": [
+        {
+          "startMin": 0,
+          "endMin": 2,
+          "label": "Whiteboard Brief",
+          "section": "brief"
+        },
+        {
+          "startMin": 2,
+          "endMin": 13,
+          "label": "Warm-up",
+          "section": "warmup"
+        },
+        {
+          "startMin": 13,
+          "endMin": 15,
+          "label": "Transition & Setup A",
+          "section": "transition"
+        },
+        {
+          "startMin": 15,
+          "endMin": 24,
+          "label": "A. Build a: Clean & Front Squat",
+          "section": "A"
+        },
+        {
+          "startMin": 24,
+          "endMin": 26,
+          "label": "Transition to B",
+          "section": "transition"
+        },
+        {
+          "startMin": 26,
+          "endMin": 36,
+          "label": "B. Build b: Pendlay Row & Plank",
+          "section": "B"
+        },
+        {
+          "startMin": 36,
+          "endMin": 38,
+          "label": "Transition to C",
+          "section": "transition"
+        },
+        {
+          "startMin": 38,
+          "endMin": 58,
+          "label": "C. Engine: 20 min EMOM",
+          "section": "C"
+        },
+        {
+          "startMin": 58,
+          "endMin": 60,
+          "label": "Cool-down & Recover",
+          "section": null
+        }
+      ]
+    }
+  ]
+}
