@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coachbuddy/gateway-go/internal/auth"
@@ -108,12 +110,12 @@ func main() {
 	authMux.HandleFunc("GET /api/v1/settings/agents", api.GetAgentPrefs)
 	authMux.HandleFunc("PUT /api/v1/settings/agents", api.SaveAgentPrefs)
 
-	authMux.HandleFunc("POST /api/v1/sessions/generate", api.GenerateSession)
-	authMux.HandleFunc("GET /api/v1/sessions", api.ListSessions)
-	authMux.HandleFunc("GET /api/v1/sessions/{id}", api.GetSession)
-	authMux.HandleFunc("DELETE /api/v1/sessions/{id}", api.DeleteSession)
-	authMux.HandleFunc("GET /api/v1/sessions/{id}/events", api.StreamSessionEvents)
-	authMux.HandleFunc("POST /api/v1/sessions/{id}/share", api.CreateShareLink)
+	authMux.HandleFunc("POST /api/v1/plans", api.CreatePlan)
+	authMux.HandleFunc("GET /api/v1/plans", api.ListPlans)
+	authMux.HandleFunc("GET /api/v1/plans/{id}", api.GetPlan)
+	authMux.HandleFunc("DELETE /api/v1/plans/{id}", api.DeletePlan)
+	authMux.HandleFunc("GET /api/v1/plans/{id}/events", api.StreamPlanEvents)
+	authMux.HandleFunc("POST /api/v1/plans/{id}/share", api.CreateShareLink)
 
 	mux.Handle("/api/v1/", tm.Middleware()(authMux))
 
@@ -123,8 +125,25 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// On SIGTERM (docker stop): stop taking requests, then let running plan
+	// generations record themselves as failed instead of staying pending.
+	stop, stopCancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopCancel()
+	go func() {
+		<-stop.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
 	log.Printf("CoachBuddy Go API Gateway & AES-256-GCM BYOK Vault listening on :%s", port)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Gateway server error: %v", err)
+	}
+	<-stop.Done()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := api.Shutdown(ctx); err != nil {
+		log.Printf("Plan generations still running at shutdown: %v", err)
 	}
 }

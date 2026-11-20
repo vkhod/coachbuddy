@@ -4,14 +4,14 @@
 
 ## 1. Layout
 
-- `app/main.py`: FastAPI app. `GET /health`, `GET /api/v1/topology`, `POST /api/v1/orchestrate` (internal token required). Publishes section events to Redis for the gateway's SSE endpoint.
+- `app/main.py`: FastAPI app. `GET /health`, `GET /api/v1/topology`, `POST /api/v1/orchestrate` (internal token required; the gateway calls it in the background after answering the coach with 202). Publishes section events to Redis for the gateway.
 - `app/pipeline.py`: builds the ADK `Workflow` per request and assembles the plan document.
 - `app/agents/sections.py`: one `SectionAgent` per plan section. It runs the section's `LlmAgent`, checks the answer, asks for one repair, or marks the section failed.
 - `app/agents/prompts.py`: the instructions (Parser, Warm-up, Scaling, Injury, Timeline). `app/agents/outputs.py`: what each agent answers, built from the contract types. `app/agents/schema_for_model.py`: the schema sent to the model.
 - `app/llm.py`: routes (provider, model, key per role, from the gateway's `routingConfig`) and the `LiteLlm` factory.
 - `app/mcp_tools.py`: the mcp-rust tools through ADK's `McpToolset` (Streamable HTTP).
 - `app/contract/`: generated from `schema/` (do not edit), plus `rules.py`, the cross-field rules.
-- `app/models.py`: the request the gateway sends today; replaced by the contract's `CreatePlanRequest` in Phase 2 step 10.
+- `app/models.py`: the internal orchestrate request: `planId`, `coachId`, `imageRef`, `createdAt` (all set by the gateway), `input` (the contract's `CreatePlanRequest`) and `routingConfig` (decrypted keys, so never in the public schema).
 - `tests/`: `test_pipeline.py` (pipeline with recorded answers), `test_wiring.py` (LiteLlm, MCP results, endpoint), `test_contract.py` (shared examples). Recorded answers in `tests/recordings/`.
 
 ## 2. Pipeline
@@ -29,6 +29,7 @@ START -> WodParserAgent -> WarmupPlannerAgent --+           +-> InjuryAgent (onl
 - Warm-up and Scaling see the `today` groups. The Injury agent sees the WOD, the warm-up (or "not planned yet") and the mentions, and writes one warm-up line and per-part suggestions per injury.
 - The pipeline, not the model, fills each injury's `label`, `fromComment`, `returnNote` and the fixed `caution` ("Suggestion only. Check with the athlete; stop on pain."). The model's entries must match the mentions in order.
 - No injuries in the comment: `sectionStatus.injuries` is `skipped` and the Injury agent is not called.
+- Events: every section change (`running`, `done`, `failed`, `skipped`) publishes a `PlanEvent` with `plan`, the plan as it stands, validated as a `Plan`. Publishing is serialised, so a later snapshot never lacks a section an earlier one had. The gateway stores the snapshots, saves the returned plan, and sends the closing `plan` event itself; agents-python never sends it.
 
 ## 3. Checks, repair and failure (D3)
 

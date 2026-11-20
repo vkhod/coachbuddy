@@ -1,6 +1,6 @@
 // Package store is the gateway's storage layer: PostgreSQL for coaches, keys,
-// agent preferences and share links; MongoDB for WOD session documents; Redis
-// for session progress events.
+// agent preferences and share links; MongoDB for plans, their screenshots and
+// agent runs; Redis for plan progress events.
 //
 // All three databases are required in every environment. A database error is
 // returned to the caller; there is no in-memory or on-disk substitute. In-memory
@@ -40,8 +40,8 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 	// ErrKeyNotFound is returned when a key ID does not exist for the coach.
 	ErrKeyNotFound = errors.New("api key not found")
-	// ErrSessionNotFound is returned when a session ID has no document.
-	ErrSessionNotFound = errors.New("session not found")
+	// ErrPlanNotFound is returned when a plan ID has no document.
+	ErrPlanNotFound = errors.New("plan not found")
 	// ErrLinkNotFound is returned when a share code is unknown or expired.
 	ErrLinkNotFound = errors.New("shared link expired or not found")
 )
@@ -50,10 +50,14 @@ var (
 var AgentRoles = []string{"global", "parser", "warmup", "scaling", "injury", "timeline"}
 
 const (
-	sessionsCollection = "wod_sessions"
-	eventsChannel      = "session:events:"
-	eventsBuffer       = "session:buffered_events:"
-	connectTimeout     = 10 * time.Second
+	plansCollection  = "plans"
+	imagesCollection = "plan_images"
+	runsCollection   = "agent_runs"
+	// The Redis names agents-python publishes to.
+	eventsChannel  = "session:events:"
+	eventsBuffer   = "session:buffered_events:"
+	eventsTTL      = 10 * time.Minute
+	connectTimeout = 10 * time.Second
 )
 
 // Config holds the connection settings. All fields are required except MongoDB,
@@ -119,11 +123,14 @@ func Open(ctx context.Context, vault *crypto.Vault, cfg Config) (*DataStore, err
 		return nil, fmt.Errorf("mongodb: %w", err)
 	}
 	ds.db = mc.Database(cfg.MongoDB)
-	if _, err := ds.db.Collection(sessionsCollection).Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "coachId", Value: 1}, {Key: "createdAt", Value: -1}},
-	}); err != nil {
-		ds.Close()
-		return nil, fmt.Errorf("mongodb index: %w", err)
+	for coll, keys := range map[string]bson.D{
+		plansCollection: {{Key: "coachId", Value: 1}, {Key: "createdAt", Value: -1}},
+		runsCollection:  {{Key: "planId", Value: 1}, {Key: "revision", Value: 1}},
+	} {
+		if _, err := ds.db.Collection(coll).Indexes().CreateOne(ctx, mongo.IndexModel{Keys: keys}); err != nil {
+			ds.Close()
+			return nil, fmt.Errorf("mongodb index on %s: %w", coll, err)
+		}
 	}
 
 	ropts, err := redis.ParseURL(cfg.RedisURL)
@@ -499,62 +506,141 @@ func buildRoutes(vault *crypto.Vault, catalog *modelcatalog.Catalog, coachID str
 	return routes, nil
 }
 
-// --- WOD session documents (MongoDB) ---
+// --- Plans, screenshots and agent runs (MongoDB) ---
 
-func (ds *DataStore) SaveSession(ctx context.Context, sessionID string, doc map[string]interface{}) error {
-	doc["_id"] = sessionID
-	doc["sessionId"] = sessionID
-	_, err := ds.db.Collection(sessionsCollection).ReplaceOne(ctx, bson.M{"_id": sessionID}, doc, options.Replace().SetUpsert(true))
-	if err != nil {
-		return fmt.Errorf("save session: %w", err)
+// CreatePlan inserts a new plan document. doc must carry "planId".
+func (ds *DataStore) CreatePlan(ctx context.Context, doc map[string]interface{}) error {
+	id, _ := doc["planId"].(string)
+	if id == "" {
+		return fmt.Errorf("%w: planId is required", ErrInvalidInput)
+	}
+	stored := withID(doc, id)
+	if _, err := ds.db.Collection(plansCollection).InsertOne(ctx, stored); err != nil {
+		return fmt.Errorf("create plan: %w", err)
 	}
 	return nil
 }
 
-func (ds *DataStore) GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error) {
-	var doc map[string]interface{}
-	err := ds.db.Collection(sessionsCollection).FindOne(ctx, bson.M{"_id": sessionID}).Decode(&doc)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, ErrSessionNotFound
-	}
+// SavePlan replaces an existing plan. A plan deleted in the meantime is not
+// brought back: the result is ErrPlanNotFound.
+func (ds *DataStore) SavePlan(ctx context.Context, planID string, doc map[string]interface{}) error {
+	res, err := ds.db.Collection(plansCollection).ReplaceOne(ctx, bson.M{"_id": planID}, withID(doc, planID))
 	if err != nil {
-		return nil, fmt.Errorf("get session: %w", err)
+		return fmt.Errorf("save plan: %w", err)
 	}
-	doc = plainDoc(doc)
-	doc["sessionId"] = sessionID
-	return doc, nil
+	if res.MatchedCount == 0 {
+		return ErrPlanNotFound
+	}
+	return nil
 }
 
-// ListSessions returns the coach's sessions, newest first, without the
-// uploaded screenshot (it can be several megabytes per session).
-func (ds *DataStore) ListSessions(ctx context.Context, coachID string) ([]map[string]interface{}, error) {
-	opts := options.Find().
-		SetSort(bson.D{{Key: "createdAt", Value: -1}}).
-		SetProjection(bson.M{"input.imageBase64": 0})
-	cur, err := ds.db.Collection(sessionsCollection).Find(ctx, bson.M{"coachId": coachID}, opts)
+func (ds *DataStore) GetPlan(ctx context.Context, planID string) (map[string]interface{}, error) {
+	var doc map[string]interface{}
+	err := ds.db.Collection(plansCollection).FindOne(ctx, bson.M{"_id": planID}).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrPlanNotFound
+	}
 	if err != nil {
-		return nil, fmt.Errorf("list sessions: %w", err)
+		return nil, fmt.Errorf("get plan: %w", err)
+	}
+	return withoutID(doc), nil
+}
+
+// ListPlans returns the coach's plans, newest first.
+func (ds *DataStore) ListPlans(ctx context.Context, coachID string) ([]map[string]interface{}, error) {
+	opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
+	cur, err := ds.db.Collection(plansCollection).Find(ctx, bson.M{"coachId": coachID}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list plans: %w", err)
 	}
 	list := []map[string]interface{}{}
 	if err := cur.All(ctx, &list); err != nil {
-		return nil, fmt.Errorf("list sessions: %w", err)
+		return nil, fmt.Errorf("list plans: %w", err)
 	}
 	for i, m := range list {
-		list[i] = plainDoc(m)
-		list[i]["sessionId"] = fmt.Sprintf("%v", m["_id"])
+		list[i] = withoutID(m)
 	}
 	return list, nil
 }
 
-func (ds *DataStore) DeleteSession(ctx context.Context, sessionID string) error {
-	res, err := ds.db.Collection(sessionsCollection).DeleteOne(ctx, bson.M{"_id": sessionID})
+// DeletePlan removes a plan with its screenshot and agent runs.
+func (ds *DataStore) DeletePlan(ctx context.Context, planID string) error {
+	doc, err := ds.GetPlan(ctx, planID)
 	if err != nil {
-		return fmt.Errorf("delete session: %w", err)
+		return err
+	}
+	if input, ok := doc["input"].(map[string]interface{}); ok {
+		if ref, _ := input["imageRef"].(string); ref != "" {
+			if _, err := ds.db.Collection(imagesCollection).DeleteOne(ctx, bson.M{"_id": ref}); err != nil {
+				return fmt.Errorf("delete plan image: %w", err)
+			}
+		}
+	}
+	if _, err := ds.db.Collection(runsCollection).DeleteMany(ctx, bson.M{"planId": planID}); err != nil {
+		return fmt.Errorf("delete agent runs: %w", err)
+	}
+	res, err := ds.db.Collection(plansCollection).DeleteOne(ctx, bson.M{"_id": planID})
+	if err != nil {
+		return fmt.Errorf("delete plan: %w", err)
 	}
 	if res.DeletedCount == 0 {
-		return ErrSessionNotFound
+		return ErrPlanNotFound
 	}
 	return nil
+}
+
+// SavePlanImage stores a screenshot once, as bytes. It is never returned by
+// the plan, list or share endpoints.
+func (ds *DataStore) SavePlanImage(ctx context.Context, img *models.PlanImage) error {
+	_, err := ds.db.Collection(imagesCollection).InsertOne(ctx, bson.M{
+		"_id":       img.Ref,
+		"coachId":   img.CoachID,
+		"mimeType":  img.MimeType,
+		"data":      primitive.Binary{Data: img.Data},
+		"bytes":     len(img.Data),
+		"createdAt": time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("save plan image: %w", err)
+	}
+	return nil
+}
+
+// SaveAgentRuns stores what ran for one revision of a plan (the agent traces),
+// kept apart from the plan so it never reaches a share link.
+func (ds *DataStore) SaveAgentRuns(ctx context.Context, runs *models.AgentRuns) error {
+	id := fmt.Sprintf("%s:%d", runs.PlanID, runs.Revision)
+	_, err := ds.db.Collection(runsCollection).ReplaceOne(ctx, bson.M{"_id": id}, bson.M{
+		"_id":                    id,
+		"planId":                 runs.PlanID,
+		"coachId":                runs.CoachID,
+		"revision":               runs.Revision,
+		"runs":                   runs.Runs,
+		"orchestrationLatencyMs": runs.OrchestrationLatencyMs,
+		"createdAt":              time.Now().UTC(),
+	}, options.Replace().SetUpsert(true))
+	if err != nil {
+		return fmt.Errorf("save agent runs: %w", err)
+	}
+	return nil
+}
+
+// withID returns a copy of doc with MongoDB's _id set.
+func withID(doc map[string]interface{}, id string) map[string]interface{} {
+	out := make(map[string]interface{}, len(doc)+1)
+	for k, v := range doc {
+		out[k] = v
+	}
+	out["_id"] = id
+	return out
+}
+
+// withoutID converts a stored document back to the plan as the contract
+// describes it (no _id, plain maps and slices).
+func withoutID(doc map[string]interface{}) map[string]interface{} {
+	out := plainDoc(doc)
+	delete(out, "_id")
+	return out
 }
 
 // plainDoc converts MongoDB's primitive.M and primitive.A, at any depth, to
@@ -594,7 +680,7 @@ func (ds *DataStore) SaveSharedLink(ctx context.Context, link *models.SharedLink
 		INSERT INTO shared_links (short_code, mongo_session_id, coach_id, include_coach_notes, qr_svg, expires_at, view_count)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING created_at
-	`, link.ShortCode, link.MongoSessionID, link.CoachID, link.IncludeCoachNotes, link.QRSVG, link.ExpiresAt, link.ViewCount).Scan(&link.CreatedAt)
+	`, link.ShortCode, link.PlanID, link.CoachID, link.IncludeCoachNotes, link.QRSVG, link.ExpiresAt, link.ViewCount).Scan(&link.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("save shared link: %w", err)
 	}
@@ -609,7 +695,7 @@ func (ds *DataStore) GetSharedLink(ctx context.Context, code string) (*models.Sh
 		UPDATE shared_links SET view_count = view_count + 1
 		WHERE short_code = $1 AND (expires_at IS NULL OR expires_at > NOW())
 		RETURNING short_code, mongo_session_id, coach_id, include_coach_notes, COALESCE(qr_svg, ''), expires_at, view_count, created_at
-	`, code).Scan(&link.ShortCode, &link.MongoSessionID, &link.CoachID, &link.IncludeCoachNotes, &link.QRSVG, &link.ExpiresAt, &link.ViewCount, &link.CreatedAt)
+	`, code).Scan(&link.ShortCode, &link.PlanID, &link.CoachID, &link.IncludeCoachNotes, &link.QRSVG, &link.ExpiresAt, &link.ViewCount, &link.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrLinkNotFound
 	}
@@ -619,9 +705,9 @@ func (ds *DataStore) GetSharedLink(ctx context.Context, code string) (*models.Sh
 	return &link, nil
 }
 
-// --- Session progress events (Redis) ---
+// --- Plan progress events (Redis) ---
 
-// EventStream is the progress of one session: the events already published,
+// EventStream is the progress of one plan: the events already published,
 // then the live ones. Close must be called when the reader is done.
 type EventStream struct {
 	Buffered []string
@@ -629,19 +715,32 @@ type EventStream struct {
 	Close    func()
 }
 
-// SessionEvents subscribes to a session's live events and then reads the
-// buffered ones, so no event published in between is lost. A live event that
-// was also in the buffer is dropped.
-func (ds *DataStore) SessionEvents(ctx context.Context, sessionID string) (*EventStream, error) {
+// PublishPlanEvent adds one event to the plan's replay list and sends it live,
+// the same way agents-python publishes section events.
+func (ds *DataStore) PublishPlanEvent(ctx context.Context, planID string, event []byte) error {
+	pipe := ds.redis.TxPipeline()
+	pipe.RPush(ctx, eventsBuffer+planID, event)
+	pipe.Expire(ctx, eventsBuffer+planID, eventsTTL)
+	pipe.Publish(ctx, eventsChannel+planID, event)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("publish plan event: %w", err)
+	}
+	return nil
+}
+
+// PlanEvents subscribes to a plan's live events and then reads the buffered
+// ones, so no event published in between is lost. A live event that was also
+// in the buffer is dropped.
+func (ds *DataStore) PlanEvents(ctx context.Context, sessionID string) (*EventStream, error) {
 	pubsub := ds.redis.Subscribe(ctx, eventsChannel+sessionID)
 	if _, err := pubsub.Receive(ctx); err != nil {
 		_ = pubsub.Close()
-		return nil, fmt.Errorf("subscribe session events: %w", err)
+		return nil, fmt.Errorf("subscribe plan events: %w", err)
 	}
 	buffered, err := ds.redis.LRange(ctx, eventsBuffer+sessionID, 0, -1).Result()
 	if err != nil {
 		_ = pubsub.Close()
-		return nil, fmt.Errorf("read buffered session events: %w", err)
+		return nil, fmt.Errorf("read buffered plan events: %w", err)
 	}
 	seen := make(map[string]bool, len(buffered))
 	for _, e := range buffered {
