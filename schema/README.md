@@ -8,7 +8,7 @@ The types in each service are generated from it and committed; nobody edits them
 | `plan.schema.json` | A class plan, as stored and returned by the gateway. Sections are absent until their agent finishes; `sectionStatus` says why. |
 | `create-plan.request.schema.json` | `POST /api/v1/plans` |
 | `regenerate-section.request.schema.json` | `POST /api/v1/plans/{id}/sections/{section}/regenerate` |
-| `plan-event.schema.json` | One SSE event on `GET /api/v1/plans/{id}/events` |
+| `plan-event.schema.json` | One SSE event on `GET /api/v1/plans/{id}/events`. `plan` carries the plan as it stands; it is typed as an object because datamodel-code-generator cannot follow a reference into another file into one module, so agents-python and the gateway validate it as a `Plan`. |
 | `tools.schema.json` | Inputs and outputs of the mcp-rust tools. Optional tool inputs accept `null`, because a model fills them. |
 
 ## Changing the contract

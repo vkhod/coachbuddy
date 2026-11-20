@@ -16,16 +16,22 @@ import (
 // every storage call return that error, to test how handlers report a
 // database failure. pingErrs sets the result of Ping per database.
 type fakeStore struct {
-	mu       sync.Mutex
-	sessions map[string]map[string]interface{}
-	links    map[string]*models.SharedLink
-	events   map[string][]string
-	routes   map[string]models.EphemeralAgentRoute
-	fail     error
-	pingErrs map[string]error
+	mu          sync.Mutex
+	plans       map[string]map[string]interface{}
+	images      map[string]*models.PlanImage
+	runs        map[string]*models.AgentRuns
+	links       map[string]*models.SharedLink
+	events      map[string][]string
+	subscribers map[string][]chan string
+	routes      map[string]models.EphemeralAgentRoute
+	fail        error
+	pingErrs    map[string]error
 	// Errors for a single call, to fail one step while the others work.
-	saveSessionErr error
-	eventsErr      error
+	createPlanErr error
+	savePlanErr   error
+	eventsErr     error
+	// savedPlans records every SavePlan, to check progress was stored.
+	savedPlans []map[string]interface{}
 }
 
 var _ Store = (*fakeStore)(nil)
@@ -33,9 +39,12 @@ var _ Store = (*store.DataStore)(nil)
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions: map[string]map[string]interface{}{},
-		links:    map[string]*models.SharedLink{},
-		events:   map[string][]string{},
+		plans:       map[string]map[string]interface{}{},
+		images:      map[string]*models.PlanImage{},
+		runs:        map[string]*models.AgentRuns{},
+		links:       map[string]*models.SharedLink{},
+		events:      map[string][]string{},
+		subscribers: map[string][]chan string{},
 		routes: map[string]models.EphemeralAgentRoute{
 			"global": {Provider: "gemini", APIKey: "test-key", Model: modelcatalog.Embedded().Default().ID},
 		},
@@ -96,52 +105,116 @@ func copyDoc(doc map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-func (f *fakeStore) SaveSession(_ context.Context, id string, doc map[string]interface{}) error {
+func (f *fakeStore) CreatePlan(_ context.Context, doc map[string]interface{}) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
 		return f.fail
 	}
-	if f.saveSessionErr != nil {
-		return f.saveSessionErr
+	if f.createPlanErr != nil {
+		return f.createPlanErr
 	}
-	doc["_id"], doc["sessionId"] = id, id
-	f.sessions[id] = copyDoc(doc)
+	id, _ := doc["planId"].(string)
+	f.plans[id] = copyDoc(doc)
 	return nil
 }
 
-func (f *fakeStore) GetSession(_ context.Context, id string) (map[string]interface{}, error) {
+func (f *fakeStore) SavePlan(_ context.Context, id string, doc map[string]interface{}) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	if f.savePlanErr != nil {
+		return f.savePlanErr
+	}
+	if _, ok := f.plans[id]; !ok {
+		return store.ErrPlanNotFound
+	}
+	f.plans[id] = copyDoc(doc)
+	f.savedPlans = append(f.savedPlans, copyDoc(doc))
+	return nil
+}
+
+func (f *fakeStore) GetPlan(_ context.Context, id string) (map[string]interface{}, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
 		return nil, f.fail
 	}
-	doc, ok := f.sessions[id]
+	doc, ok := f.plans[id]
 	if !ok {
-		return nil, store.ErrSessionNotFound
+		return nil, store.ErrPlanNotFound
 	}
 	return copyDoc(doc), nil
 }
 
-func (f *fakeStore) ListSessions(context.Context, string) ([]map[string]interface{}, error) {
-	return nil, errNotInFake
+func (f *fakeStore) ListPlans(_ context.Context, coachID string) ([]map[string]interface{}, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	var out []map[string]interface{}
+	for _, d := range f.plans {
+		if d["coachId"] == coachID {
+			out = append(out, copyDoc(d))
+		}
+	}
+	return out, nil
 }
 
-func (f *fakeStore) DeleteSession(_ context.Context, id string) error {
+func (f *fakeStore) DeletePlan(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
 		return f.fail
 	}
-	if _, ok := f.sessions[id]; !ok {
-		return store.ErrSessionNotFound
+	if _, ok := f.plans[id]; !ok {
+		return store.ErrPlanNotFound
 	}
-	delete(f.sessions, id)
+	delete(f.plans, id)
 	return nil
 }
 
-// SessionEvents returns the stored events as buffered and a closed live channel.
-func (f *fakeStore) SessionEvents(_ context.Context, id string) (*store.EventStream, error) {
+func (f *fakeStore) SavePlanImage(_ context.Context, img *models.PlanImage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	cp := *img
+	f.images[img.Ref] = &cp
+	return nil
+}
+
+func (f *fakeStore) SaveAgentRuns(_ context.Context, runs *models.AgentRuns) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	cp := *runs
+	f.runs[runs.PlanID] = &cp
+	return nil
+}
+
+// PublishPlanEvent stores the event and sends it to open subscriptions, like Redis.
+func (f *fakeStore) PublishPlanEvent(_ context.Context, id string, event []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	f.events[id] = append(f.events[id], string(event))
+	for _, ch := range f.subscribers[id] {
+		ch <- string(event)
+	}
+	return nil
+}
+
+// PlanEvents returns the stored events as buffered and the later ones live.
+func (f *fakeStore) PlanEvents(_ context.Context, id string) (*store.EventStream, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
@@ -150,9 +223,27 @@ func (f *fakeStore) SessionEvents(_ context.Context, id string) (*store.EventStr
 	if f.eventsErr != nil {
 		return nil, f.eventsErr
 	}
-	live := make(chan string)
-	close(live)
-	return &store.EventStream{Buffered: append([]string(nil), f.events[id]...), Live: live, Close: func() {}}, nil
+	ch := make(chan string, 64)
+	f.subscribers[id] = append(f.subscribers[id], ch)
+	var once sync.Once
+	return &store.EventStream{
+		Buffered: append([]string(nil), f.events[id]...),
+		Live:     ch,
+		Close: func() {
+			once.Do(func() {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				subs := f.subscribers[id]
+				for i, c := range subs {
+					if c == ch {
+						f.subscribers[id] = append(subs[:i], subs[i+1:]...)
+						break
+					}
+				}
+				close(ch)
+			})
+		},
+	}, nil
 }
 
 func (f *fakeStore) SaveSharedLink(_ context.Context, link *models.SharedLink) error {

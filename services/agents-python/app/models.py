@@ -1,15 +1,16 @@
-"""Request models for POST /api/v1/orchestrate, as the gateway sends them today.
+"""The internal request for POST /api/v1/orchestrate, as the gateway sends it.
 
-The plan itself is described by the generated contract in app/contract/. These request
-models go when generation becomes asynchronous (Phase 2 step 10) and the gateway sends
-the contract's CreatePlanRequest instead.
+The coach's part (`input`) is the contract's CreatePlanRequest. The rest is internal and
+stays out of the public schema: the decrypted keys must never appear in a public type.
 """
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
+
+from app.contract.create_plan_request import CreatePlanRequest
 
 
 class EphemeralAgentRoute(BaseModel):
@@ -22,21 +23,14 @@ class EphemeralAgentRoute(BaseModel):
     apiKey: SecretStr = Field(default=SecretStr(""))
 
 
-class SessionInput(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    title: Optional[str] = ""
-    rawText: str = ""
-    imageBase64: Optional[str] = ""
-    # The coach's comment: who attends today, injuries, warm-up wishes.
-    coachConstraints: str = Field(default="", max_length=1000)
-    targetDurationMinutes: int = Field(default=60, ge=20, le=180)
-
-
 class OrchestrateRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
-    sessionId: str = Field(..., min_length=1, max_length=64)
+    planId: str = Field(..., min_length=1, max_length=64)
     coachId: str = Field(..., min_length=1, max_length=64)
-    input: SessionInput
+    # Where the gateway stored the screenshot; written into the plan as input.imageRef.
+    imageRef: str = Field(..., min_length=1, max_length=64)
+    # The plan's createdAt, set by the gateway when it accepted the request.
+    createdAt: str = Field(..., min_length=1)
+    input: CreatePlanRequest
     routingConfig: Dict[str, EphemeralAgentRoute] = Field(default_factory=dict)

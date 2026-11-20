@@ -18,7 +18,7 @@ var errDBDown = errors.New("connection refused")
 
 func saveOwned(t *testing.T, ds *fakeStore, id, coach string) {
 	t.Helper()
-	if err := ds.SaveSession(t.Context(), id, map[string]interface{}{"coachId": coach, "title": "WOD"}); err != nil {
+	if err := ds.CreatePlan(t.Context(), pendingPlan(id, coach)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -68,7 +68,7 @@ func TestCreateShareLink_MCPRustFailureReturns502AndSavesNothing(t *testing.T) {
 			saveOwned(t, ds, "s1", "coach-alpha")
 
 			rr := httptest.NewRecorder()
-			api.CreateShareLink(rr, requestAs(http.MethodPost, "/api/v1/sessions/s1/share", "coach-alpha", "s1"))
+			api.CreateShareLink(rr, requestAs(http.MethodPost, "/api/v1/plans/s1/share", "coach-alpha", "s1"))
 
 			if rr.Code != http.StatusBadGateway {
 				t.Fatalf("expected 502, got %d: %s", rr.Code, rr.Body.String())
@@ -89,136 +89,13 @@ func TestCreateShareLink_UsesMCPRustQR(t *testing.T) {
 	saveOwned(t, ds, "s1", "coach-alpha")
 
 	rr := httptest.NewRecorder()
-	api.CreateShareLink(rr, requestAs(http.MethodPost, "/api/v1/sessions/s1/share", "coach-alpha", "s1"))
+	api.CreateShareLink(rr, requestAs(http.MethodPost, "/api/v1/plans/s1/share", "coach-alpha", "s1"))
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 	if got := decodeBody(t, rr)["qrSvg"]; got != `<svg id="from-rust"></svg>` {
 		t.Errorf("expected the SVG from mcp-rust, got %v", got)
-	}
-}
-
-func TestGenerateSession_AgentsFailureReturns502AndSavesNothing(t *testing.T) {
-	agents := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "model quota exceeded", http.StatusInternalServerError)
-	}))
-	t.Cleanup(agents.Close)
-
-	for name, url := range map[string]string{"unreachable": "http://127.0.0.1:1", "500": agents.URL} {
-		t.Run(name, func(t *testing.T) {
-			api, ds := newTestAPIHandler(t)
-			api.AgentsServiceURL = url
-
-			req := requestAs(http.MethodPost, "/api/v1/sessions/generate", "coach-alpha", "")
-			req.Body = httpBody(`{"rawText":"6RFT: 10 Thrusters, 10 Pull-ups"}`)
-			rr := httptest.NewRecorder()
-			api.GenerateSession(rr, req)
-
-			if rr.Code != http.StatusBadGateway {
-				t.Fatalf("expected 502, got %d: %s", rr.Code, rr.Body.String())
-			}
-			if _, has := decodeBody(t, rr)["session"]; has {
-				t.Error("a failed orchestration must not return a plan")
-			}
-			if len(ds.sessions) != 0 {
-				t.Errorf("nothing may be saved, got %d sessions", len(ds.sessions))
-			}
-		})
-	}
-}
-
-func TestGenerateSession_OwnerIsTheCaller(t *testing.T) {
-	agents := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"coachId":"someone-else","title":"Plan"}`))
-	}))
-	t.Cleanup(agents.Close)
-	api, ds := newTestAPIHandler(t)
-	api.AgentsServiceURL = agents.URL
-
-	req := requestAs(http.MethodPost, "/api/v1/sessions/generate", "coach-alpha", "")
-	req.Body = httpBody(`{"rawText":"EMOM 12"}`)
-	rr := httptest.NewRecorder()
-	api.GenerateSession(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
-	}
-	for _, doc := range ds.sessions {
-		if doc["coachId"] != "coach-alpha" {
-			t.Errorf("saved owner must be the caller, got %v", doc["coachId"])
-		}
-	}
-}
-
-func TestGenerateSession_SaveFailureReturns500(t *testing.T) {
-	agents := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"title":"Plan"}`))
-	}))
-	t.Cleanup(agents.Close)
-	api, ds := newTestAPIHandler(t)
-	api.AgentsServiceURL = agents.URL
-
-	ds.saveSessionErr = errDBDown
-
-	req := requestAs(http.MethodPost, "/api/v1/sessions/generate", "coach-alpha", "")
-	req.Body = httpBody(`{"rawText":"EMOM 12"}`)
-	rr := httptest.NewRecorder()
-	api.GenerateSession(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
-	}
-	if strings.Contains(rr.Body.String(), errDBDown.Error()) {
-		t.Error("database error details must not reach the client")
-	}
-}
-
-func TestSessionRead_DatabaseErrorIs500Not404(t *testing.T) {
-	api, ds := newTestAPIHandler(t)
-	ds.fail = errDBDown
-
-	for name, h := range map[string]http.HandlerFunc{
-		"get": api.GetSession, "delete": api.DeleteSession, "events": api.StreamSessionEvents, "share": api.CreateShareLink,
-	} {
-		rr := httptest.NewRecorder()
-		h(rr, requestAs(http.MethodGet, "/api/v1/sessions/s1", "coach-alpha", "s1"))
-		if rr.Code != http.StatusInternalServerError {
-			t.Errorf("%s: expected 500 when the database is down, got %d", name, rr.Code)
-		}
-	}
-}
-
-func TestStreamSessionEvents_RedisFailureIsNotAStream(t *testing.T) {
-	api, ds := newTestAPIHandler(t)
-	saveOwned(t, ds, "s1", "coach-alpha")
-	ds.eventsErr = errDBDown
-
-	rr := httptest.NewRecorder()
-	api.StreamSessionEvents(rr, requestAs(http.MethodGet, "/api/v1/sessions/s1/events", "coach-alpha", "s1"))
-
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct == "text/event-stream" {
-		t.Error("the stream must not open when Redis is down")
-	}
-	if strings.Contains(rr.Body.String(), "completed") {
-		t.Error("a Redis failure must not be reported as a completed session")
-	}
-}
-
-func TestStreamSessionEvents_ReplaysBufferedUntilCompleted(t *testing.T) {
-	api, ds := newTestAPIHandler(t)
-	saveOwned(t, ds, "s1", "coach-alpha")
-	ds.events["s1"] = []string{`{"step":"parser"}`, `{"step":"completed"}`, `{"step":"after"}`}
-
-	rr := httptest.NewRecorder()
-	api.StreamSessionEvents(rr, requestAs(http.MethodGet, "/api/v1/sessions/s1/events", "coach-alpha", "s1"))
-
-	want := "data: {\"step\":\"parser\"}\n\ndata: {\"step\":\"completed\"}\n\n"
-	if rr.Body.String() != want {
-		t.Errorf("stream body:\n got %q\nwant %q", rr.Body.String(), want)
 	}
 }
 

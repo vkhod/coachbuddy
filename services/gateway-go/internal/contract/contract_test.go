@@ -21,6 +21,22 @@ func TestCreatePlanRequestExamples(t *testing.T) {
 	checkExamples(t, "create-plan.request", func(raw []byte) error { var r CreatePlanRequest; return json.Unmarshal(raw, &r) })
 }
 
+// A plan event is valid when the event is, and its plan (when present) is a valid Plan.
+func TestPlanEventExamples(t *testing.T) {
+	checkExamples(t, "plan-event", func(raw []byte) error {
+		var e PlanEvent
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return err
+		}
+		if e.Plan == nil {
+			return nil
+		}
+		b, _ := json.Marshal(e.Plan)
+		var p Plan
+		return json.Unmarshal(b, &p)
+	})
+}
+
 func checkExamples(t *testing.T, name string, decode func([]byte) error) {
 	t.Helper()
 	for _, kind := range []string{"valid", "invalid"} {

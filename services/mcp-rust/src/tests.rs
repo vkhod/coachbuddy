@@ -279,7 +279,7 @@ async fn real_mongodb_history_and_health() {
     };
     let coll = state
         .db
-        .collection::<mongodb::bson::Document>("wod_sessions");
+        .collection::<mongodb::bson::Document>(crate::domain::history::PLANS_COLLECTION);
     coll.insert_many(
         vec![
             doc! {"_id": "old", "coachId": "c1", "status": "completed", "createdAt": "2026-11-16T10:00:00Z",

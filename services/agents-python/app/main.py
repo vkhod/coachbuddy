@@ -50,7 +50,8 @@ class EventStream:
         encoded = json.dumps(payload)
         try:
             await self.client.rpush(f"session:buffered_events:{plan_id}", encoded)
-            await self.client.expire(f"session:buffered_events:{plan_id}", 300)
+            # Long enough to cover a slow parser; a finished plan is read from the gateway.
+            await self.client.expire(f"session:buffered_events:{plan_id}", 600)
             await self.client.publish(f"session:events:{plan_id}", encoded)
         except Exception as exc:
             # Progress events are not the record; the returned plan is. Log and go on.
@@ -118,8 +119,9 @@ def _check_token(token: Optional[str]) -> None:
 
 @app.post("/api/v1/orchestrate")
 async def orchestrate(req: OrchestrateRequest, x_internal_gateway_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
-    """Builds a plan. Failed sections are reported in sectionStatus with the reason; the
-    response is still 200, so the coach sees the sections that did work."""
+    """Builds a plan and returns it with agentRuns. Called by the gateway in the background
+    after it answered the coach with 202. Failed sections are reported in sectionStatus
+    with the reason; the response is still 200, so the coach sees the sections that did work."""
     _check_token(x_internal_gateway_token)
     try:
         return await pipeline.run(req, publish=event_stream.publish)

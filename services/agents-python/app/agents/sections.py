@@ -116,7 +116,8 @@ class AgentRun:
     tools: List[str] = field(default_factory=list)
 
 
-Notify = Callable[[str, str, Optional[str]], Awaitable[None]]
+# (section, state, error, content): content is the section's output on "done".
+Notify = Callable[[str, str, Optional[str], Optional[Dict[str, Any]]], Awaitable[None]]
 
 
 class SectionAgent(BaseAgent):
@@ -154,10 +155,10 @@ class SectionAgent(BaseAgent):
     def output(self, value: Any) -> Dict[str, Any]:
         return {self.section: value}
 
-    async def _emit(self, state: str, error: Optional[str] = None) -> None:
+    async def _emit(self, state: str, error: Optional[str] = None, content: Optional[Dict[str, Any]] = None) -> None:
         if self.notify is not None:
             try:
-                await self.notify(self.section, state, error)
+                await self.notify(self.section, state, error, content)
             except Exception as exc:  # events are best-effort; the plan is the record
                 logger.debug("event for %s not published: %s", self.section, exc)
 
@@ -222,9 +223,10 @@ class SectionAgent(BaseAgent):
                 await self._emit("failed", reason)
                 return
             if not problems:
-                yield self._state_event(self.output(value))
+                out = self.output(value)
+                yield self._state_event(out)
                 yield finish("done")
-                await self._emit("done")
+                await self._emit("done", content=out)
                 return
             logger.info("%s answer rejected (attempt %d): %s", self.inner.name, attempt, problems)
 
