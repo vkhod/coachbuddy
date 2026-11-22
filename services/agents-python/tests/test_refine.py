@@ -151,6 +151,88 @@ async def test_a_failed_warmup_change_keeps_the_timeline_marked_provisional():
     assert calls(models) == {"warmup": 2}
 
 
+def two_injury_warmup(minutes=12):
+    w = recording("senior-two-injuries-60.json")["warmup"][0]
+    w["blocks"][0]["name"] = "Band pull-apart game"
+    w["blocks"][-1]["minutes"] += minutes - w["minutes"]
+    w["minutes"] = minutes
+    return w
+
+
+NEW_LINES = {"injuries": [
+    {"label": "Ankle", "warmup": "Band pull-aparts standing still; no hopping"},
+    {"label": "Shoulder", "warmup": "Light band pull-aparts below shoulder height"},
+]}
+
+
+async def test_a_warmup_change_rewrites_the_injury_warmup_lines_and_nothing_else_in_them():
+    """An injury line written for the old warm-up must not stay next to the new one."""
+    before = await built_plan("senior-two-injuries-60.json", comment=TWO_INJURIES)
+    models = ReplayModels({"warmup": [two_injury_warmup()], "injury": [copy.deepcopy(NEW_LINES)]})
+    doc = await refine(before, "warmup", "No equipment", models)
+
+    assert calls(models) == {"warmup": 1, "injury": 1}  # same minutes: no timeline call
+    assert [i["warmup"] for i in doc["injuries"]] == [l["warmup"] for l in NEW_LINES["injuries"]]
+    for new, old in zip(doc["injuries"], before["injuries"]):
+        assert {k: v for k, v in new.items() if k != "warmup"} == {k: v for k, v in old.items() if k != "warmup"}
+    for key in ("wod", "parts", "timeline", "today"):
+        assert doc[key] == before[key], key
+    assert [r["section"] for r in doc["agentRuns"]] == ["warmup", "injuries"]
+    prompt = models.models["injury"].instructions()[0]
+    assert "Band pull-apart game" in prompt  # the new warm-up
+    assert "Current injury advice: " in prompt and "Skip the jumping in the mirror game" in prompt
+    assert "Only the warm-up lines change" in prompt
+
+
+async def test_injury_lines_and_timeline_both_follow_a_warmup_with_new_minutes():
+    before = await built_plan("senior-two-injuries-60.json", comment=TWO_INJURIES)
+    models = ReplayModels({"warmup": [two_injury_warmup(10)], "injury": [copy.deepcopy(NEW_LINES)], "timeline": [timeline_for(10)]})
+    doc = await refine(before, "warmup", "Shorter", models)
+    assert calls(models) == {"warmup": 1, "injury": 1, "timeline": 1}
+    assert {s: doc["sectionStatus"][s]["state"] for s in ("warmup", "injuries", "timeline")} == {s: "done" for s in ("warmup", "injuries", "timeline")}
+    assert sorted(r["section"] for r in doc["agentRuns"]) == ["injuries", "timeline", "warmup"]
+
+
+async def test_injury_lines_with_other_labels_are_repaired():
+    before = await built_plan("senior-two-injuries-60.json", comment=TWO_INJURIES)
+    wrong = {"injuries": [NEW_LINES["injuries"][1], NEW_LINES["injuries"][0]]}
+    models = ReplayModels({"warmup": [two_injury_warmup()], "injury": [wrong, copy.deepcopy(NEW_LINES)]})
+    doc = await refine(before, "warmup", "No equipment", models)
+    assert states(doc)["injuries"] == "done"
+    assert "expected one entry per injury in this order ['Ankle', 'Shoulder'], got ['Shoulder', 'Ankle']" in models.models["injury"].instructions()[1]
+
+
+async def test_a_failed_warmup_change_leaves_the_injuries_as_stored():
+    before = await built_plan("senior-two-injuries-60.json", comment=TWO_INJURIES)
+    bad = dict(two_injury_warmup(), minutes="twelve")
+    models = ReplayModels({"warmup": [bad, copy.deepcopy(bad)]})
+    doc = await refine(before, "warmup", "No equipment", models)
+    assert states(doc)["warmup"] == "failed"
+    assert doc["injuries"] == before["injuries"] and states(doc)["injuries"] == "done"
+    assert calls(models) == {"warmup": 2}
+
+
+async def test_a_retry_tells_the_model_why_the_last_attempt_failed():
+    """The coach's "Try again" alone would repeat the failed attempt blind."""
+    before = await built_plan()
+    before.pop("warmup")
+    before["sectionStatus"]["warmup"] = {"state": "failed", "error": "minutes: Input should be a valid integer"}
+    before["timeline"]["provisional"] = True
+    models = ReplayModels({"warmup": [shorter_warmup(12)], "timeline": [recording()["timeline"][0]]})
+    doc = await refine(before, "warmup", "Try again", models)
+    prompt = models.models["warmup"].instructions()[0]
+    assert "The previous attempt at the warm-up failed: minutes: Input should be a valid integer. Avoid the same problem." in prompt
+    assert "There is no warm-up yet; build it." in prompt
+    assert states(doc)["warmup"] == "done" and doc["timeline"]["provisional"] is False
+
+
+async def test_a_change_to_a_working_section_has_no_failure_line():
+    before = await built_plan()
+    models = ReplayModels({"scaling": [recording()["scaling"][0]]})
+    await refine(before, "parts", "Simpler", models)
+    assert "previous attempt" not in models.models["scaling"].instructions()[0]
+
+
 async def test_scaling_change_leaves_every_other_section():
     before = await built_plan()
     parts = recording()["scaling"][0]

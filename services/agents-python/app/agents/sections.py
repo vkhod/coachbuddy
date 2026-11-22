@@ -22,7 +22,7 @@ from google.adk.events import Event, EventActions
 from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError
 
 from app.agents import prompts
-from app.agents.outputs import InjuriesOut, InjuriesRefineOut, ParserOut, ScalingOut, TimelineDraft, WarmupOut
+from app.agents.outputs import InjuriesOut, InjuriesRefineOut, InjuryWarmupLinesOut, ParserOut, ScalingOut, TimelineDraft, WarmupOut
 from app.agents.schema_for_model import schema_for_model
 from app.contract.plan import (
     ClassInput,
@@ -252,6 +252,15 @@ SECTION_NAMES = {"warmup": "warm-up", "parts": "scaling", "injuries": "injury ad
 def _refine_inputs(section: str, state: Dict[str, Any]) -> str:
     """The change the coach asked for, with the section as it stands (refinement only)."""
     refine = state.get("refine") or {}
+    if section == "injuries" and refine.get("section") == "warmup":
+        return "\n".join(
+            [
+                "The coach changed the warm-up of an existing plan; the warm-up above is the new one.",
+                f"Current injury advice: {as_json(state.get('injuries') or [])}",
+                "Write a new warm-up line for each injury, for the new warm-up: same labels, same order, "
+                "one entry per injury. Only the warm-up lines change; the advice for the WOD parts stays as it is.",
+            ]
+        )
     if refine.get("section") != section:
         return ""
     name = SECTION_NAMES[section]
@@ -263,6 +272,8 @@ def _refine_inputs(section: str, state: Dict[str, Any]) -> str:
         f"The coach's change: {refine['instruction']}",
         "Make the change the coach asks for and keep the rest as it is. Every other rule above still applies.",
     ]
+    if refine.get("previousError"):
+        lines.insert(1, f"The previous attempt at the {name} failed: {refine['previousError']}. Avoid the same problem.")
     if section == "injuries":
         lines.append(
             "Keep one entry per injury in the current list, same label and order, unless the change adds or "
@@ -404,6 +415,12 @@ def _refining(state: Dict[str, Any], section: str) -> bool:
 class InjurySection(SectionAgent):
     async def prepare(self, state):
         _need_wod(state)
+        if _refining(state, "warmup"):
+            # After a warm-up change only the injury warm-up lines are written again, and
+            # only when there are injuries and a new warm-up to fit them to.
+            if not state.get("injuries") or not state.get("warmup"):
+                raise SectionKept()
+            return {}
         if not state.get("injuryMentions") and not _refining(state, "injuries"):
             raise SectionSkipped()
         return {}
@@ -411,6 +428,8 @@ class InjurySection(SectionAgent):
     async def check(self, state, draft):
         if _refining(state, "injuries"):
             return self._check_refined(state, draft)
+        if _refining(state, "warmup"):
+            return self._check_warmup_lines(state, draft)
         out = InjuriesOut.model_validate(draft)
         mentions = state["injuryMentions"]
         problems: List[str] = []
@@ -460,6 +479,17 @@ class InjurySection(SectionAgent):
                 )
             )
         problems += check_plan_rules(_rules_plan(Wod.model_validate(state["wod"]), injuries=injuries))
+        return [i.model_dump(mode="json", exclude_none=True) for i in injuries], problems
+
+    def _check_warmup_lines(self, state, draft):
+        """New warm-up lines on the stored injuries; nothing else in them changes."""
+        out = InjuryWarmupLinesOut.model_validate(draft)
+        stored = state["injuries"]
+        got, want = [a.label for a in out.injuries], [i["label"] for i in stored]
+        if got != want:
+            return None, [f"injuries: expected one entry per injury in this order {want}, got {got}"]
+        injuries = [Injury.model_validate({**i, "warmup": a.warmup}) for i, a in zip(stored, out.injuries)]
+        problems = check_plan_rules(_rules_plan(Wod.model_validate(state["wod"]), injuries=injuries))
         return [i.model_dump(mode="json", exclude_none=True) for i in injuries], problems
 
     def output(self, value):
@@ -562,12 +592,15 @@ SECTIONS = {
 
 
 def build_section(
-    section: str, route: Route, factory: ModelFactory, tools: Tools, notify: Optional[Notify], refine: bool = False
+    section: str, route: Route, factory: ModelFactory, tools: Tools, notify: Optional[Notify], refine: Optional[str] = None
 ) -> SectionAgent:
-    """refine: the section is being changed on request; injuries then answer with their labels."""
+    """refine: the section the coach is changing, in a refinement. Injuries then answer with
+    their labels (injuries changed) or with new warm-up lines only (warm-up changed)."""
     name, cls, base, inputs, schema, sees_input, _role = SECTIONS[section]
-    if refine and section == "injuries":
+    if section == "injuries" and refine == "injuries":
         schema = InjuriesRefineOut
+    elif section == "injuries" and refine == "warmup":
+        schema = InjuryWarmupLinesOut
     inner = _llm_agent(name, section, route, factory, base, inputs, schema, sees_input)
     return cls(name=f"{name}Section", section=section, inner=inner, route=route, tools=tools, notify=notify)
 

@@ -11,8 +11,9 @@ the comment. ADK's Workflow replaces the deprecated SequentialAgent/ParallelAgen
 (capability report, decision 5.1).
 
 Refinement runs one section again with the stored plan in session state and the coach's
-instruction. After a warm-up change the Timeline section follows, and rebuilds only when
-the warm-up minutes changed (plan 2.3).
+instruction. After a warm-up change the Injury section writes new warm-up lines for the
+stored injuries, and the Timeline section rebuilds when the warm-up minutes changed
+(plan 2.3); both run in parallel and keep the stored section when there is nothing to do.
 """
 
 from __future__ import annotations
@@ -147,7 +148,9 @@ class PlanPipeline:
     async def regenerate(self, req: RegenerateRequest, publish: Optional[EventPublisher] = None) -> Dict[str, Any]:
         """Builds one section again with the coach's instruction and returns the plan at
         req.revision plus agentRuns. The other sections are kept as stored. A warm-up change
-        is followed by the timeline when the warm-up minutes changed."""
+        is followed by new injury warm-up lines (when there are injuries) and by the timeline
+        (when the warm-up minutes changed). A retry of a failed section shows the model why
+        the last attempt failed."""
         try:
             Plan.model_validate(req.plan)
             # The stored values as they are: a round trip would rewrite createdAt's format.
@@ -160,7 +163,9 @@ class PlanPipeline:
             raise InputError("the WOD could not be read for this plan; build the plan again")
 
         section = req.section
-        run_sections = [section, "timeline"] if section == "warmup" else [section]
+        # A warm-up change carries on to what depends on the warm-up: the injury warm-up
+        # lines and the timeline. Each is kept as stored when it has nothing to change.
+        run_sections = ["warmup", "injuries", "timeline"] if section == "warmup" else [section]
         routes = {s: resolve_route(role_for(s), req.routingConfig) for s in run_sections}
 
         comment = before["input"].get("comment", "")
@@ -181,6 +186,7 @@ class PlanPipeline:
                 "instruction": req.instruction.strip(),
                 "comment": comment,
                 "current": before.get(section),
+                "previousError": before["sectionStatus"][section].get("error") if before["sectionStatus"][section]["state"] == "failed" else None,
                 "warmupMinutesBefore": (before.get("warmup") or {}).get("minutes"),
                 "timelineBefore": before.get("timeline"),
             },
@@ -193,10 +199,10 @@ class PlanPipeline:
         doc["updatedAt"] = _now()
         progress = Progress(doc, publish, revision=req.revision)
 
-        node = {s: build_section(s, routes[s], self.model_factory, self.tools, progress.notify, refine=True) for s in run_sections}
+        node = {s: build_section(s, routes[s], self.model_factory, self.tools, progress.notify, refine=section) for s in run_sections}
         edges = [(START, node[section])]
         if section == "warmup":
-            edges.append((node["warmup"], node["timeline"]))
+            edges += [(node["warmup"], node["injuries"]), (node["warmup"], node["timeline"])]
         workflow = Workflow(name="RefineWorkflow", edges=edges)
         message = types.Content(role="user", parts=[types.Part(text=f"Change the {section} section: {req.instruction.strip()}")])
         state, latency = await self._run_workflow(workflow, req.coachId, f"{req.planId}:{req.revision}", state, message)

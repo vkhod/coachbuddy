@@ -72,3 +72,17 @@ class InjuryRefineAdvice(BaseModel):
 class InjuriesRefineOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
     injuries: list[InjuryRefineAdvice] = Field(..., max_length=6, description="Empty list when the coach removes every injury.")
+
+
+class InjuryWarmupLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: constr(min_length=1, max_length=40) = Field(..., description="The injury's label, as in the current list.")
+    warmup: constr(min_length=1, max_length=100)
+
+
+class InjuryWarmupLinesOut(BaseModel):
+    """After a warm-up change: one new warm-up line per stored injury. The part
+    suggestions and everything else stay as stored."""
+
+    model_config = ConfigDict(extra="forbid")
+    injuries: list[InjuryWarmupLine] = Field(..., max_length=6, description="One entry per injury, same labels and order as the current list.")

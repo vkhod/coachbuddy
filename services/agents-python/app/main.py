@@ -102,7 +102,7 @@ TOPOLOGY = {
     "refine": {
         "root": "RefineWorkflow",
         "sections": ["warmup", "parts", "injuries", "timeline"],
-        "then": {"warmup": "TimelineAgent, only when the warm-up minutes changed"},
+        "then": {"warmup": ["InjuryAgent, new warm-up lines only, when there are injuries", "TimelineAgent, only when the warm-up minutes changed"]},
     },
 }
 

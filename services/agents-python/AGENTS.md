@@ -34,12 +34,15 @@ START -> WodParserAgent -> WarmupPlannerAgent --+           +-> InjuryAgent (onl
 ### Refinement (step 11)
 
 ```
-START -> one SectionAgent (warmup, parts, injuries or timeline) [-> TimelineAgent after a warm-up change]
+START -> one SectionAgent (warmup, parts, injuries or timeline)
+warm-up change: WarmupPlannerAgent --+-> InjuryAgent (new warm-up lines only)
+                                     +-> TimelineAgent (only when the minutes changed)
 ```
 
 - The stored plan goes into session state; the section being changed is removed from it and shown to the model as "current", with the coach's instruction and the comment the plan was built from. The parser never runs again (the gateway refuses `wod`).
-- After a warm-up change the Timeline section follows and rebuilds only when the warm-up minutes changed, or the old timeline was provisional or missing. Otherwise it raises `SectionKept`: the stored timeline and its state stay, with no model call. A failed new warm-up keeps the old timeline, marked `provisional`.
-- Injuries in a refinement answer with their labels (`InjuriesRefineOut`), so the coach can add or drop one ("Add an injury: sore knee"). An injury that stays keeps its `fromComment`; a new one gets the instruction as `fromComment`.
+- A retry of a failed section adds "The previous attempt at the ... failed: <reason>" to the prompt, so a bare "Try again" does not repeat the same attempt blind.
+- After a warm-up change two sections follow, in parallel. The Injury section writes one new warm-up line per stored injury (`InjuryWarmupLinesOut`: label and line, same labels and order); the pipeline keeps everything else in each injury as stored. The Timeline section rebuilds only when the warm-up minutes changed, or the old timeline was provisional or missing. Either raises `SectionKept` when it has nothing to do (no injuries, same minutes) or when the new warm-up failed: the stored section and its state stay, with no model call. A failed new warm-up also marks the kept timeline `provisional`.
+- Injuries changed on request answer with their labels (`InjuriesRefineOut`), so the coach can add or drop one ("Add an injury: sore knee"). An injury that stays keeps its `fromComment`; a new one gets the instruction as `fromComment`.
 - Events carry the new revision. A section that starts again loses its content in the snapshots until it is done, as in a new plan.
 
 ## 3. Checks, repair and failure (D3)
