@@ -28,7 +28,7 @@ pub fn build_history_filter_and_options(coach_id: &str, limit: i64) -> (Document
     (filter, options)
 }
 
-/// Pure extractor that parses a raw MongoDB `wod_sessions` BSON document into
+/// Pure extractor that parses a raw MongoDB `plans` BSON document into
 /// a structured `PastWarmupSummary` containing game title, style, and drill names.
 pub fn extract_past_warmup_from_doc(doc: &Document) -> Option<PastWarmupSummary> {
     let session_id = doc
@@ -121,14 +121,18 @@ pub fn extract_past_warmup_from_doc(doc: &Document) -> Option<PastWarmupSummary>
     })
 }
 
-/// Queries MongoDB `wod_sessions` for the coach's recent completed warm-ups.
+/// The MongoDB collection the gateway stores plans in (Phase 2 step 10; it was
+/// `wod_sessions` before).
+pub const PLANS_COLLECTION: &str = "plans";
+
+/// Queries MongoDB `plans` for the coach's recent completed warm-ups.
 /// This prevents repetitive game/drill programming across consecutive days.
 /// Any MongoDB failure is returned as an error, never as an empty history.
 pub async fn query_recent_coaching_history(
     db: &Database,
     input: HistoryQueryInput,
 ) -> Result<HistoryQueryOutput, String> {
-    let collection = db.collection::<Document>("wod_sessions");
+    let collection = db.collection::<Document>(PLANS_COLLECTION);
 
     let (filter, options) = build_history_filter_and_options(&input.coach_id, input.limit);
     let mut cursor = collection

@@ -11,6 +11,7 @@ import (
 	"github.com/coachbuddy/gateway-go/internal/modelcatalog"
 	"github.com/coachbuddy/gateway-go/internal/models"
 	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // Integration tests run against real databases. They are skipped unless all
@@ -187,28 +188,39 @@ func TestIntegration_KeysPrefsAndRouting(t *testing.T) {
 	}
 }
 
-func TestIntegration_Sessions(t *testing.T) {
+func TestIntegration_Plans(t *testing.T) {
 	ds := openTestStore(t)
 	ctx := context.Background()
 
-	for i, s := range []struct{ id, coach string }{{"s-old", "alpha"}, {"s-new", "alpha"}, {"s-beta", "beta"}} {
+	for i, p := range []struct{ id, coach string }{{"pl-old", "alpha"}, {"pl-new", "alpha"}, {"pl-beta", "beta"}} {
 		doc := map[string]interface{}{
-			"coachId":   s.coach,
+			"planId":    p.id,
+			"coachId":   p.coach,
+			"revision":  1,
 			"createdAt": time.Date(2026, 11, 18, 10, i, 0, 0, time.UTC).Format(time.RFC3339),
-			"input":     map[string]interface{}{"rawText": "6RFT", "imageBase64": "data:image/png;base64,HUGE"},
-			"timeline":  map[string]interface{}{"blocks": []interface{}{map[string]interface{}{"label": "Warm-up", "notes": "n"}}},
+			"input":     map[string]interface{}{"imageRef": "img-" + p.id, "classMinutes": 60},
+			"timeline":  map[string]interface{}{"blocks": []interface{}{map[string]interface{}{"label": "Warm-up"}}},
 		}
-		if err := ds.SaveSession(ctx, s.id, doc); err != nil {
+		if err := ds.CreatePlan(ctx, doc); err != nil {
+			t.Fatal(err)
+		}
+		if err := ds.SavePlanImage(ctx, &models.PlanImage{Ref: "img-" + p.id, CoachID: p.coach, MimeType: "image/png", Data: []byte{1, 2, 3}}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if err := ds.CreatePlan(ctx, map[string]interface{}{"planId": "pl-new"}); err == nil {
+		t.Error("creating a plan twice must fail")
+	}
 
-	doc, err := ds.GetSession(ctx, "s-new")
+	doc, err := ds.GetPlan(ctx, "pl-new")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, has := doc["_id"]; has {
+		t.Error("the plan must come back without MongoDB's _id")
+	}
 	// Nested documents must come back as maps and slices, the shapes the
-	// handlers and the share sanitiser work with.
+	// handlers and the share views work with.
 	tl, ok := doc["timeline"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("timeline decoded as %T, want map", doc["timeline"])
@@ -220,34 +232,54 @@ func TestIntegration_Sessions(t *testing.T) {
 	if _, ok := blocks[0].(map[string]interface{}); !ok {
 		t.Fatalf("block decoded as %T, want map", blocks[0])
 	}
-	if _, err := ds.GetSession(ctx, "missing"); !errors.Is(err, ErrSessionNotFound) {
-		t.Errorf("missing: want ErrSessionNotFound, got %v", err)
+	if _, err := ds.GetPlan(ctx, "missing"); !errors.Is(err, ErrPlanNotFound) {
+		t.Errorf("missing: want ErrPlanNotFound, got %v", err)
 	}
 
-	list, err := ds.ListSessions(ctx, "alpha")
+	doc["revision"] = 2
+	if err := ds.SavePlan(ctx, "pl-new", doc); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ds.GetPlan(ctx, "pl-new"); got["revision"] != int32(2) && got["revision"] != int64(2) && got["revision"] != 2 {
+		t.Errorf("saved revision: %v (%T)", got["revision"], got["revision"])
+	}
+	if err := ds.SavePlan(ctx, "missing", doc); !errors.Is(err, ErrPlanNotFound) {
+		t.Errorf("saving a plan that does not exist must not create it: %v", err)
+	}
+
+	list, err := ds.ListPlans(ctx, "alpha")
 	if err != nil || len(list) != 2 {
 		t.Fatalf("list alpha: %d, %v", len(list), err)
 	}
-	if list[0]["sessionId"] != "s-new" {
-		t.Errorf("newest first: got %v", list[0]["sessionId"])
+	if list[0]["planId"] != "pl-new" {
+		t.Errorf("newest first: got %v", list[0]["planId"])
 	}
-	in, ok := list[0]["input"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("list input decoded as %T, want map", list[0]["input"])
-	}
-	if _, has := in["imageBase64"]; has || in["rawText"] != "6RFT" {
-		t.Errorf("list must drop the screenshot and keep the rest: %v", in)
-	}
-	empty, err := ds.ListSessions(ctx, "nobody")
+	empty, err := ds.ListPlans(ctx, "nobody")
 	if err != nil || empty == nil || len(empty) != 0 {
-		t.Errorf("no sessions: want empty slice, got %v, %v", empty, err)
+		t.Errorf("no plans: want empty slice, got %v, %v", empty, err)
 	}
 
-	if err := ds.DeleteSession(ctx, "s-old"); err != nil {
+	if err := ds.SaveAgentRuns(ctx, &models.AgentRuns{PlanID: "pl-old", CoachID: "alpha", Revision: 1, Runs: []interface{}{map[string]interface{}{"agent": "WodParserAgent"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ds.DeleteSession(ctx, "s-old"); !errors.Is(err, ErrSessionNotFound) {
-		t.Errorf("second delete: want ErrSessionNotFound, got %v", err)
+	if n, _ := ds.db.Collection(runsCollection).CountDocuments(ctx, bson.M{"planId": "pl-old"}); n != 1 {
+		t.Errorf("agent runs stored: %d", n)
+	}
+
+	if err := ds.DeletePlan(ctx, "pl-old"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := ds.db.Collection(imagesCollection).CountDocuments(ctx, bson.M{"_id": "img-pl-old"}); n != 0 {
+		t.Error("deleting a plan must delete its screenshot")
+	}
+	if n, _ := ds.db.Collection(runsCollection).CountDocuments(ctx, bson.M{"planId": "pl-old"}); n != 0 {
+		t.Error("deleting a plan must delete its agent runs")
+	}
+	if n, _ := ds.db.Collection(imagesCollection).CountDocuments(ctx, bson.M{"_id": "img-pl-new"}); n != 1 {
+		t.Error("other screenshots must stay")
+	}
+	if err := ds.DeletePlan(ctx, "pl-old"); !errors.Is(err, ErrPlanNotFound) {
+		t.Errorf("second delete: want ErrPlanNotFound, got %v", err)
 	}
 }
 
@@ -256,7 +288,7 @@ func TestIntegration_SharedLinks(t *testing.T) {
 	ctx := context.Background()
 	c := newCoach(t, ds, "share@box.com")
 
-	link := &models.SharedLink{ShortCode: "cb-aaa", MongoSessionID: "s1", CoachID: c.ID, QRSVG: "<svg/>"}
+	link := &models.SharedLink{ShortCode: "cb-aaa", PlanID: "s1", CoachID: c.ID, QRSVG: "<svg/>"}
 	if err := ds.SaveSharedLink(ctx, link); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +300,7 @@ func TestIntegration_SharedLinks(t *testing.T) {
 	}
 
 	past := time.Now().Add(-time.Hour)
-	if err := ds.SaveSharedLink(ctx, &models.SharedLink{ShortCode: "cb-old", MongoSessionID: "s1", CoachID: c.ID, ExpiresAt: &past}); err != nil {
+	if err := ds.SaveSharedLink(ctx, &models.SharedLink{ShortCode: "cb-old", PlanID: "s1", CoachID: c.ID, ExpiresAt: &past}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ds.GetSharedLink(ctx, "cb-old"); !errors.Is(err, ErrLinkNotFound) {
@@ -279,7 +311,7 @@ func TestIntegration_SharedLinks(t *testing.T) {
 	}
 }
 
-func TestIntegration_SessionEvents(t *testing.T) {
+func TestIntegration_PlanEvents(t *testing.T) {
 	ds := openTestStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -289,7 +321,7 @@ func TestIntegration_SessionEvents(t *testing.T) {
 	first := `{"step":"parser"}`
 	ds.redis.RPush(ctx, eventsBuffer+id, first)
 
-	stream, err := ds.SessionEvents(ctx, id)
+	stream, err := ds.PlanEvents(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,6 +341,26 @@ func TestIntegration_SessionEvents(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("no live event")
+	}
+
+	// The gateway's own closing event goes into the replay list and out live.
+	end := `{"section":"plan","state":"done"}`
+	if err := ds.PublishPlanEvent(ctx, id, []byte(end)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-stream.Live:
+		if got != end {
+			t.Errorf("live: got %s, want %s", got, end)
+		}
+	case <-ctx.Done():
+		t.Fatal("no live closing event")
+	}
+	if buf, _ := ds.redis.LRange(ctx, eventsBuffer+id, 0, -1).Result(); len(buf) != 2 || buf[1] != end {
+		t.Errorf("replay list: %v", buf)
+	}
+	if ttl := ds.redis.TTL(ctx, eventsBuffer+id).Val(); ttl <= 0 || ttl > eventsTTL {
+		t.Errorf("replay list must expire: ttl %v", ttl)
 	}
 
 	if errs := ds.Ping(ctx); errs["postgres"] != nil || errs["mongodb"] != nil || errs["redis"] != nil {

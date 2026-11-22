@@ -7,8 +7,10 @@ from __future__ import annotations
 import copy
 
 import pytest
+from pydantic import ValidationError
 
 from app.contract.plan import Plan
+from app.contract.plan_event import PlanEvent
 from app.llm import RouteError
 from app.mcp_tools import ToolError
 from app.models import EphemeralAgentRoute
@@ -47,7 +49,9 @@ async def test_full_plan_is_valid_against_the_contract():
     assert plan.input.comment is None and plan.input.classMinutes == 60
     # Nulls the model may send for optional fields are dropped (the JSON Schema has no nulls).
     assert "rxPlus" not in doc["parts"][0]["tiers"]
-    assert {e["section"] for e in events} >= {"wod", "warmup", "parts", "timeline", "plan"}
+    # The closing "plan" event is the gateway's, sent after it saved the plan.
+    assert {e["section"] for e in events} == {"wod", "warmup", "parts", "injuries", "timeline"}
+    assert plan.input.imageRef == "img_test01" and doc["createdAt"] == "2026-11-20T09:00:00+00:00"
     assert [r["agent"] for r in doc["agentRuns"]][0] == "WodParserAgent"
 
 
@@ -187,10 +191,16 @@ async def test_per_role_routes_and_no_key_is_a_route_error():
         await run(ReplayModels(script()), req=request(routes={"global": EphemeralAgentRoute(provider="gemini", model="gemini/gemini-3.8-flash")}))
 
 
-@pytest.mark.parametrize("image,msg", [("data:image/svg+xml;base64,PHN2Zy8+", "unsupported image type"), ("", "send a WOD screenshot")])
+@pytest.mark.parametrize("image,msg", [("data:image/svg+xml;base64,PHN2Zy8+", "unsupported image type"), ("data:image/png;base64,", "the image is empty")])
 async def test_bad_input_is_rejected(image, msg):
     with pytest.raises(InputError, match=msg):
         await run(ReplayModels(script()), req=request(image=image))
+
+
+def test_a_request_without_a_screenshot_is_refused_by_the_contract():
+    # CreatePlanRequest requires imageBase64; a text-only WOD is no longer accepted.
+    with pytest.raises(ValidationError):
+        request(image="")
 
 
 def test_model_schema_keeps_structure_and_describes_limits():
@@ -337,3 +347,32 @@ async def test_injury_role_has_its_own_route():
     models = ReplayModels(injury_script())
     await run(models, req=request(comment=TWO_INJURIES, routes=routes))
     assert models.models["injury"].model == "anthropic/claude-sonnet-5-5"
+
+
+async def test_every_event_carries_a_valid_plan_snapshot_that_only_grows():
+    """The gateway stores each snapshot as progress. A snapshot published after another
+    must not lack a section the earlier one had (Warm-up and Scaling finish concurrently)."""
+    events = []
+    await run(ReplayModels(script()), events=events)
+    seen = set()
+    for e in events:
+        PlanEvent.model_validate(e)
+        plan = Plan.model_validate(e["plan"])
+        assert plan.sectionStatus.model_dump(mode="json")[e["section"]]["state"] == e["state"]
+        present = {k for k in ("wod", "warmup", "parts", "timeline") if e["plan"].get(k) is not None}
+        assert present >= seen, (e["section"], e["state"])
+        seen = present
+    assert seen == {"wod", "warmup", "parts", "timeline"}
+    first = events[0]
+    assert (first["section"], first["state"]) == ("wod", "running")
+    assert first["plan"]["sectionStatus"]["warmup"] == {"state": "pending"}
+
+
+async def test_a_failed_section_event_says_why_and_keeps_the_others():
+    tools = FakeTools({"verify_timeline_math": mcp_down})
+    events = []
+    await run(ReplayModels(script()), tools=tools, events=events)
+    last = events[-1]
+    assert (last["section"], last["state"]) == ("timeline", "failed")
+    assert "mcp-rust unreachable" in last["error"]
+    assert "timeline" not in last["plan"] and last["plan"]["warmup"]["blocks"]

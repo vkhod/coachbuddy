@@ -4,7 +4,7 @@ export type EventSection = "wod" | "warmup" | "parts" | "injuries" | "timeline" 
 export type EventState = "pending" | "running" | "done" | "failed" | "skipped";
 
 /**
- * One SSE event on GET /api/v1/plans/{id}/events. section 'plan' with state done or failed ends the stream.
+ * One SSE event on GET /api/v1/plans/{id}/events. Section events carry the plan as it stands after that section. section 'plan' with state done or failed ends the stream.
  */
 export interface PlanEvent {
   planId: string;
@@ -12,4 +12,8 @@ export interface PlanEvent {
   section: EventSection;
   state: EventState;
   error?: string;
+  /**
+   * The plan as it stands after this event: a Plan (plan.schema.json), sections not finished yet absent. Typed as an object here because the Python generator cannot follow a reference into another file; agents-python and the gateway validate it as a Plan.
+   */
+  plan?: {};
 }

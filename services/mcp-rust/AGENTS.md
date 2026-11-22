@@ -11,7 +11,7 @@ This directory contains `mcp-rust` (`:8082`), a high-performance, deterministic 
 - `src/tests.rs`: router tests (MCP protocol, REST, health); the real-MongoDB test runs when `MCP_TEST_MONGO_URI` is set (CI sets it).
 - `src/contract.rs`: tool input and output types generated from `schema/tools.schema.json` by `scripts/gen-schema` (do not edit); `src/contract_tests.rs` checks the shared examples.
 - `src/mcp.rs`: the `rmcp` `ServerHandler` (tool list and `tools/call`), tool definitions, and `execute_named_tool`, shared with the REST routes. rmcp serves the protocol over Streamable HTTP, stateless, with JSON responses.
-- `src/domain/history.rs`: `get_recent_coaching_history` implementation querying MongoDB `wod_sessions` for recent warm-up drills to prevent repetition.
+- `src/domain/history.rs`: `get_recent_coaching_history` implementation querying MongoDB `plans` (the collection the gateway writes) for recent warm-up drills to prevent repetition.
 - `src/domain/timeline.rs`: `verify_timeline_math` pure deterministic verifier checking `0..totalMinutes` contiguity, positive block durations, gaps/overlaps, and exact duration sum.
 - `src/domain/qr.rs`: `generate_qr_svg` zero-external-asset SVG QR code generator with custom quiet zone and high-contrast styling.
 

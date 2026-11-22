@@ -41,9 +41,9 @@ CREATE TABLE IF NOT EXISTS agent_model_prefs (
 -- 4. Shared Session Short Links & QR Metadata
 CREATE TABLE IF NOT EXISTS shared_links (
     short_code VARCHAR(32) PRIMARY KEY,
-    mongo_session_id VARCHAR(64) NOT NULL,
+    mongo_session_id VARCHAR(64) NOT NULL, -- the plan ID (MongoDB plans._id)
     coach_id UUID NOT NULL REFERENCES coaches(id) ON DELETE CASCADE,
-    include_coach_notes BOOLEAN NOT NULL DEFAULT TRUE,
+    include_coach_notes BOOLEAN NOT NULL DEFAULT FALSE, -- FALSE: athlete view
     qr_svg TEXT,
     expires_at TIMESTAMPTZ,
     view_count INT NOT NULL DEFAULT 0,

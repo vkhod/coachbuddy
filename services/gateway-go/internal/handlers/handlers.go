@@ -10,13 +10,13 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coachbuddy/gateway-go/internal/auth"
 	"github.com/coachbuddy/gateway-go/internal/modelcatalog"
 	"github.com/coachbuddy/gateway-go/internal/models"
 	"github.com/coachbuddy/gateway-go/internal/store"
-	"github.com/google/uuid"
 )
 
 // Store is what the handlers need from storage. *store.DataStore implements it
@@ -37,11 +37,15 @@ type Store interface {
 	BuildEphemeralRoutingConfig(ctx context.Context, coachID string) (map[string]models.EphemeralAgentRoute, error)
 	Models() *modelcatalog.Catalog
 
-	SaveSession(ctx context.Context, sessionID string, doc map[string]interface{}) error
-	GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error)
-	ListSessions(ctx context.Context, coachID string) ([]map[string]interface{}, error)
-	DeleteSession(ctx context.Context, sessionID string) error
-	SessionEvents(ctx context.Context, sessionID string) (*store.EventStream, error)
+	CreatePlan(ctx context.Context, doc map[string]interface{}) error
+	SavePlan(ctx context.Context, planID string, doc map[string]interface{}) error
+	GetPlan(ctx context.Context, planID string) (map[string]interface{}, error)
+	ListPlans(ctx context.Context, coachID string) ([]map[string]interface{}, error)
+	DeletePlan(ctx context.Context, planID string) error
+	SavePlanImage(ctx context.Context, img *models.PlanImage) error
+	SaveAgentRuns(ctx context.Context, runs *models.AgentRuns) error
+	PlanEvents(ctx context.Context, planID string) (*store.EventStream, error)
+	PublishPlanEvent(ctx context.Context, planID string, event []byte) error
 
 	SaveSharedLink(ctx context.Context, link *models.SharedLink) error
 	GetSharedLink(ctx context.Context, code string) (*models.SharedLink, error)
@@ -55,9 +59,17 @@ type APIHandler struct {
 	PublicShareBaseURL string
 	InternalToken      string // shared secret sent to agents-python as X-Internal-Gateway-Token
 	HttpClient         *http.Client
+	// GenerateTimeout bounds one plan generation in the background (the
+	// orchestrator call). The parser alone has taken up to 100 s live.
+	GenerateTimeout time.Duration
+
+	jobs       sync.WaitGroup
+	jobsCtx    context.Context
+	cancelJobs context.CancelFunc
 }
 
 func NewAPIHandler(ds Store, tm *auth.TokenManager, agentsURL, mcpRustURL, shareBaseURL, internalToken string) *APIHandler {
+	jobsCtx, cancel := context.WithCancel(context.Background())
 	return &APIHandler{
 		Store:              ds,
 		Tokens:             tm,
@@ -65,9 +77,28 @@ func NewAPIHandler(ds Store, tm *auth.TokenManager, agentsURL, mcpRustURL, share
 		AgentsServiceURL:   strings.TrimRight(agentsURL, "/"),
 		McpRustURL:         strings.TrimRight(mcpRustURL, "/"),
 		PublicShareBaseURL: strings.TrimRight(shareBaseURL, "/"),
+		// Short calls only (mcp-rust). The orchestrator call is bounded by GenerateTimeout.
 		HttpClient: &http.Client{
-			Timeout: 150 * time.Second,
+			Timeout: 15 * time.Second,
 		},
+		GenerateTimeout: 5 * time.Minute,
+		jobsCtx:         jobsCtx,
+		cancelJobs:      cancel,
+	}
+}
+
+// Shutdown stops the plan generations still running and waits until each has
+// recorded its plan as failed, or until ctx ends. Called when the gateway stops,
+// so no plan is left "pending" for ever.
+func (h *APIHandler) Shutdown(ctx context.Context) error {
+	h.cancelJobs()
+	done := make(chan struct{})
+	go func() { h.jobs.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -344,323 +375,7 @@ func (h *APIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.Store.Models())
 }
 
-// --- WOD Session Generation & Orchestration ---
-
-func (h *APIHandler) GenerateSession(w http.ResponseWriter, r *http.Request) {
-	coachID := auth.GetCoachID(r.Context())
-	var input models.SessionInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON payload")
-		return
-	}
-	if input.TargetDurationMinutes <= 0 {
-		input.TargetDurationMinutes = 60
-	}
-	if strings.TrimSpace(input.RawText) == "" && strings.TrimSpace(input.ImageBase64) == "" {
-		writeError(w, http.StatusBadRequest, "please provide either WOD text or a WOD screenshot")
-		return
-	}
-
-	sessionID := "wod-" + uuid.NewString()[:8]
-	routingConfig, err := h.Store.BuildEphemeralRoutingConfig(r.Context(), coachID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "Cannot orchestrate session: "+err.Error())
-		return
-	}
-
-	orchReq := models.OrchestrateRequest{
-		SessionID:     sessionID,
-		CoachID:       coachID,
-		Input:         input,
-		RoutingConfig: routingConfig,
-	}
-
-	bodyBytes, _ := json.Marshal(orchReq)
-	httpReq, err := http.NewRequestWithContext(r.Context(), "POST", h.AgentsServiceURL+"/api/v1/orchestrate", bytes.NewReader(bodyBytes))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to create orchestrate request")
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Internal-Gateway-Token", h.InternalToken)
-
-	resp, err := h.HttpClient.Do(httpReq)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("Python Multi-Agent orchestrator unreachable: %v", err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("Python orchestrator error (%d): %s", resp.StatusCode, string(respBody)))
-		return
-	}
-
-	var sessionDoc map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&sessionDoc); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to decode orchestrator response: "+err.Error())
-		return
-	}
-
-	// The owner is always the authenticated coach, whatever the orchestrator sent.
-	sessionDoc["coachId"] = coachID
-	if err := h.Store.SaveSession(r.Context(), sessionID, sessionDoc); err != nil {
-		writeStoreError(w, "save session", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"sessionId": sessionID,
-		"status":    "completed",
-		"session":   sessionDoc,
-	})
-}
-
-func (h *APIHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
-	coachID := auth.GetCoachID(r.Context())
-	sessions, err := h.Store.ListSessions(r.Context(), coachID)
-	if err != nil {
-		writeStoreError(w, "list sessions", err)
-		return
-	}
-	if sessions == nil {
-		sessions = []map[string]interface{}{}
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": sessions})
-}
-
-// getOwnedSession loads a session and checks that it belongs to the authenticated
-// coach. A session owned by someone else is reported as not found, so its
-// existence is not revealed. It writes the error response itself and returns
-// false when the caller should stop.
-func (h *APIHandler) getOwnedSession(w http.ResponseWriter, r *http.Request, sessionID string) (map[string]interface{}, bool) {
-	coachID := auth.GetCoachID(r.Context())
-	if coachID == "" {
-		writeError(w, http.StatusNotFound, "session not found")
-		return nil, false
-	}
-	doc, err := h.Store.GetSession(r.Context(), sessionID)
-	if errors.Is(err, store.ErrSessionNotFound) {
-		writeError(w, http.StatusNotFound, "session not found")
-		return nil, false
-	}
-	if err != nil {
-		writeStoreError(w, "get session", err)
-		return nil, false
-	}
-	if owner, _ := doc["coachId"].(string); owner != coachID {
-		writeError(w, http.StatusNotFound, "session not found")
-		return nil, false
-	}
-	return doc, true
-}
-
-func (h *APIHandler) GetSession(w http.ResponseWriter, r *http.Request) {
-	doc, ok := h.getOwnedSession(w, r, r.PathValue("id"))
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"session": doc})
-}
-
-func (h *APIHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("id")
-	if _, ok := h.getOwnedSession(w, r, sessionID); !ok {
-		return
-	}
-	err := h.Store.DeleteSession(r.Context(), sessionID)
-	if errors.Is(err, store.ErrSessionNotFound) {
-		writeError(w, http.StatusNotFound, "session not found")
-		return
-	}
-	if err != nil {
-		writeStoreError(w, "delete session", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-// --- SSE Progress Stream (Redis Pub/Sub) ---
-
-func isCompletedEvent(evt string) bool {
-	return strings.Contains(evt, `"step":"completed"`) || strings.Contains(evt, `"step": "completed"`)
-}
-
-func (h *APIHandler) StreamSessionEvents(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("id")
-	// Same rule as read, delete and share: another coach's session, or an unknown
-	// one, is reported as not found before the stream opens.
-	if _, ok := h.getOwnedSession(w, r, sessionID); !ok {
-		return
-	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-
-	// Open the subscription before the stream, so a Redis failure is a plain
-	// error response rather than an event stream that never says anything.
-	events, err := h.Store.SessionEvents(ctx, sessionID)
-	if err != nil {
-		log.Printf("[gateway] session events %s: %v", sessionID, err)
-		writeError(w, http.StatusServiceUnavailable, "session events unavailable")
-		return
-	}
-	defer events.Close()
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	for _, evt := range events.Buffered {
-		fmt.Fprintf(w, "data: %s\n\n", evt)
-		flusher.Flush()
-		if isCompletedEvent(evt) {
-			return
-		}
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case evt, ok := <-events.Live:
-			if !ok {
-				return
-			}
-			fmt.Fprintf(w, "data: %s\n\n", evt)
-			flusher.Flush()
-			if isCompletedEvent(evt) {
-				return
-			}
-		}
-	}
-}
-
-// --- Share Session & Rust MCP SVG QR Code ---
-
-func (h *APIHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
-	coachID := auth.GetCoachID(r.Context())
-	sessionID := r.PathValue("id")
-
-	if _, ok := h.getOwnedSession(w, r, sessionID); !ok {
-		return
-	}
-
-	var req struct {
-		IncludeCoachNotes *bool `json:"includeCoachNotes"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	includeNotes := true
-	if req.IncludeCoachNotes != nil {
-		includeNotes = *req.IncludeCoachNotes
-	}
-
-	// 12 hex chars (48 bits) so public share codes cannot be guessed by enumeration.
-	shortCode := "cb-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	shareURL := fmt.Sprintf("%s/%s", h.PublicShareBaseURL, shortCode)
-
-	qrSVG, err := h.fetchQRFromRustMCP(r.Context(), shareURL)
-	if err != nil {
-		log.Printf("[gateway] QR code for %s: %v", sessionID, err)
-		writeError(w, http.StatusBadGateway, "QR code service unavailable, try again")
-		return
-	}
-
-	link := &models.SharedLink{
-		ShortCode:         shortCode,
-		ShareURL:          shareURL,
-		MongoSessionID:    sessionID,
-		CoachID:           coachID,
-		IncludeCoachNotes: includeNotes,
-		QRSVG:             qrSVG,
-	}
-	if err := h.Store.SaveSharedLink(r.Context(), link); err != nil {
-		writeStoreError(w, "save share link", err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, link)
-}
-
-func (h *APIHandler) ResolveShareLink(w http.ResponseWriter, r *http.Request) {
-	code := r.PathValue("code")
-	link, err := h.Store.GetSharedLink(r.Context(), code)
-	if errors.Is(err, store.ErrLinkNotFound) {
-		writeError(w, http.StatusNotFound, "shared link expired or not found")
-		return
-	}
-	if err != nil {
-		writeStoreError(w, "resolve share link", err)
-		return
-	}
-	link.ShareURL = fmt.Sprintf("%s/%s", h.PublicShareBaseURL, link.ShortCode)
-
-	sessionDoc, err := h.Store.GetSession(r.Context(), link.MongoSessionID)
-	if errors.Is(err, store.ErrSessionNotFound) {
-		writeError(w, http.StatusNotFound, "underlying WOD session not found")
-		return
-	}
-	if err != nil {
-		writeStoreError(w, "resolve share link", err)
-		return
-	}
-
-	// Work on a JSON copy so private coaching notes can be removed for athlete links.
-	raw, err := json.Marshal(sessionDoc)
-	if err != nil {
-		writeStoreError(w, "resolve share link", err)
-		return
-	}
-	var filtered map[string]interface{}
-	if err := json.Unmarshal(raw, &filtered); err != nil {
-		writeStoreError(w, "resolve share link", err)
-		return
-	}
-	if !link.IncludeCoachNotes {
-		sanitizeForAthletes(filtered)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"share":   link,
-		"session": filtered,
-	})
-}
-
-// sanitizeForAthletes removes private coaching content from a session shared
-// with athletes: agent traces, coach warnings, block notes and exercise cues.
-// Step 10 moves this to the new contract.
-func sanitizeForAthletes(doc map[string]interface{}) {
-	delete(doc, "agentTraces")
-	delete(doc, "agentRuns")
-	if tl, ok := doc["timeline"].(map[string]interface{}); ok {
-		delete(tl, "coachWarnings")
-		if blocks, ok := tl["blocks"].([]interface{}); ok {
-			for _, b := range blocks {
-				if bm, ok := b.(map[string]interface{}); ok {
-					delete(bm, "notes")
-				}
-			}
-		}
-	}
-	stripCues := func(list interface{}) {
-		if exercises, ok := list.([]interface{}); ok {
-			for _, ex := range exercises {
-				if em, ok := ex.(map[string]interface{}); ok {
-					delete(em, "cues")
-				}
-			}
-		}
-	}
-	if scaling, ok := doc["scaling"].(map[string]interface{}); ok {
-		stripCues(scaling["exercises"])
-	}
-	stripCues(doc["exercises"])
-}
+// --- Rust MCP SVG QR Code ---
 
 // fetchQRFromRustMCP asks mcp-rust for the QR code of a share URL. Any failure
 // is returned; the gateway never draws a QR code itself.

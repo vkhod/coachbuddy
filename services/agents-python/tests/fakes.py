@@ -16,7 +16,8 @@ from google.genai import types
 
 from app.llm import Route
 from app.mcp_tools import ToolError
-from app.models import EphemeralAgentRoute, OrchestrateRequest, SessionInput
+from app.contract.create_plan_request import CreatePlanRequest
+from app.models import EphemeralAgentRoute, OrchestrateRequest
 
 RECORDINGS = Path(__file__).parent / "recordings"
 TINY_PNG = (
@@ -94,8 +95,10 @@ def mcp_down(_args: Dict[str, Any]) -> Dict[str, Any]:
 
 def request(comment: str = "", image: str = TINY_PNG, minutes: int = 60, routes: Optional[Dict[str, EphemeralAgentRoute]] = None) -> OrchestrateRequest:
     return OrchestrateRequest(
-        sessionId="pl_test01",
+        planId="pl_test01",
         coachId="c_01",
-        input=SessionInput(imageBase64=image, coachConstraints=comment, targetDurationMinutes=minutes),
+        imageRef="img_test01",
+        createdAt="2026-11-20T09:00:00+00:00",
+        input=CreatePlanRequest(imageBase64=image, comment=comment or None, classMinutes=minutes),
         routingConfig=routes if routes is not None else {"global": EphemeralAgentRoute(provider="gemini", model="gemini/gemini-3.8-flash", apiKey="test-key-123")},
     )

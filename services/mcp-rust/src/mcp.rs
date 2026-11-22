@@ -147,7 +147,7 @@ pub fn tool_definitions() -> Vec<Tool> {
     vec![
         Tool::new(
             "get_recent_coaching_history",
-            "Queries MongoDB wod_sessions for the coach's recent completed warm-up games, styles, and drills to prevent repetitive programming across consecutive days.",
+            "Queries MongoDB plans for the coach's recent completed warm-up games, styles, and drills to prevent repetitive programming across consecutive days.",
             schema(json!({
                 "type": "object",
                 "properties": {

@@ -539,11 +539,18 @@ type Plan struct {
 	Wod *Wod `json:"wod,omitempty,omitzero"`
 }
 
-// One SSE event on GET /api/v1/plans/{id}/events. section 'plan' with state done
-// or failed ends the stream.
+// One SSE event on GET /api/v1/plans/{id}/events. Section events carry the plan as
+// it stands after that section. section 'plan' with state done or failed ends the
+// stream.
 type PlanEvent struct {
 	// Error corresponds to the JSON schema field "error".
 	Error *string `json:"error,omitempty,omitzero"`
+
+	// The plan as it stands after this event: a Plan (plan.schema.json), sections not
+	// finished yet absent. Typed as an object here because the Python generator
+	// cannot follow a reference into another file; agents-python and the gateway
+	// validate it as a Plan.
+	Plan PlanEventPlan `json:"plan,omitempty,omitzero"`
 
 	// PlanId corresponds to the JSON schema field "planId".
 	PlanId string `json:"planId"`
@@ -557,6 +564,12 @@ type PlanEvent struct {
 	// State corresponds to the JSON schema field "state".
 	State EventState `json:"state"`
 }
+
+// The plan as it stands after this event: a Plan (plan.schema.json), sections not
+// finished yet absent. Typed as an object here because the Python generator cannot
+// follow a reference into another file; agents-python and the gateway validate it
+// as a Plan.
+type PlanEventPlan map[string]interface{}
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *PlanEvent) UnmarshalJSON(value []byte) error {

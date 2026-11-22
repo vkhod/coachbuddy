@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from app.contract.create_plan_request import CreatePlanRequest
 from app.contract.plan import Plan
+from app.contract.plan_event import PlanEvent
 from app.contract.rules import check_plan_rules
 
 EXAMPLES = Path(__file__).resolve().parents[3] / "schema" / "examples"
@@ -78,3 +79,13 @@ def test_create_plan_request_examples() -> None:
     for path in _files("create-plan.request", "invalid"):
         with pytest.raises(ValidationError):
             CreatePlanRequest.model_validate(_load(path))
+
+
+def test_plan_event_examples_carry_a_valid_plan() -> None:
+    for path in _files("plan-event", "valid"):
+        event = PlanEvent.model_validate(_load(path))
+        if event.plan is not None:
+            Plan.model_validate(event.plan)
+    for path in _files("plan-event", "invalid"):
+        with pytest.raises(ValidationError):
+            PlanEvent.model_validate(_load(path))

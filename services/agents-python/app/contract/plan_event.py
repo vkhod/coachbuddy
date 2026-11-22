@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from pydantic import BaseModel, ConfigDict, conint, constr
+from pydantic import BaseModel, ConfigDict, Field, conint, constr
+from typing import Any
 
 
 class EventSection(StrEnum):
@@ -32,3 +33,7 @@ class PlanEvent(BaseModel):
     section: EventSection
     state: EventState
     error: constr(max_length=300) | None = None
+    plan: dict[str, Any] | None = Field(
+        None,
+        description="The plan as it stands after this event: a Plan (plan.schema.json), sections not finished yet absent. Typed as an object here because the Python generator cannot follow a reference into another file; agents-python and the gateway validate it as a Plan.",
+    )
