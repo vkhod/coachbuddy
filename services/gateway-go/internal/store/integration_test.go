@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coachbuddy/gateway-go/internal/contract"
 	"github.com/coachbuddy/gateway-go/internal/modelcatalog"
 	"github.com/coachbuddy/gateway-go/internal/models"
 	"github.com/google/uuid"
@@ -237,10 +238,24 @@ func TestIntegration_Plans(t *testing.T) {
 	}
 
 	doc["revision"] = 2
-	if err := ds.SavePlan(ctx, "pl-new", doc); err != nil {
+	if err := ds.SavePlan(ctx, "pl-new", doc); !errors.Is(err, ErrPlanNotFound) {
+		t.Errorf("SavePlan must not move a plan to another revision: %v", err)
+	}
+	if err := ds.AdvancePlan(ctx, "pl-new", 1, doc); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := ds.GetPlan(ctx, "pl-new"); got["revision"] != int32(2) && got["revision"] != int64(2) && got["revision"] != 2 {
+	if err := ds.AdvancePlan(ctx, "pl-new", 1, doc); !errors.Is(err, ErrRevisionConflict) {
+		t.Errorf("a second change from revision 1: want ErrRevisionConflict, got %v", err)
+	}
+	if err := ds.AdvancePlan(ctx, "missing", 1, doc); !errors.Is(err, ErrPlanNotFound) {
+		t.Errorf("advance a missing plan: want ErrPlanNotFound, got %v", err)
+	}
+	// A plan saved as JSON has a float64 revision; it must still match.
+	doc["revision"] = float64(2)
+	if err := ds.SavePlan(ctx, "pl-new", doc); err != nil {
+		t.Fatalf("save at the current revision: %v", err)
+	}
+	if got, _ := ds.GetPlan(ctx, "pl-new"); RevisionOf(got) != 2 {
 		t.Errorf("saved revision: %v (%T)", got["revision"], got["revision"])
 	}
 	if err := ds.SavePlan(ctx, "missing", doc); !errors.Is(err, ErrPlanNotFound) {
@@ -280,6 +295,68 @@ func TestIntegration_Plans(t *testing.T) {
 	}
 	if err := ds.DeletePlan(ctx, "pl-old"); !errors.Is(err, ErrPlanNotFound) {
 		t.Errorf("second delete: want ErrPlanNotFound, got %v", err)
+	}
+}
+
+func TestIntegration_PlanRevisions(t *testing.T) {
+	ds := openTestStore(t)
+	ctx := context.Background()
+	if err := ds.CreatePlan(ctx, map[string]interface{}{"planId": "pl-r", "coachId": "alpha", "revision": 1}); err != nil {
+		t.Fatal(err)
+	}
+	section, instruction, from := contract.RevisionSectionWarmup, "Use bands", 1
+	plan := map[string]interface{}{"planId": "pl-r", "revision": 1, "warmup": map[string]interface{}{"minutes": 12, "blocks": []interface{}{"a"}}}
+	revs := []*models.PlanRevision{
+		{PlanID: "pl-r", CoachID: "alpha", Revision: 1, CreatedAt: "2026-11-22T10:00:00.000Z", Change: contract.RevisionChange{Kind: contract.RevisionKindCreate}, Sections: []string{"wod", "warmup"}, State: "done", Plan: plan},
+		{PlanID: "pl-r", CoachID: "alpha", Revision: 2, CreatedAt: "2026-11-22T10:05:00.000Z", Change: contract.RevisionChange{Kind: contract.RevisionKindRegenerate, Section: &section, Instruction: &instruction}, Sections: []string{"warmup"}, State: "running"},
+		{PlanID: "pl-r", CoachID: "alpha", Revision: 3, CreatedAt: "2026-11-22T10:06:00.000Z", Change: contract.RevisionChange{Kind: contract.RevisionKindRestore, RestoredFrom: &from}, State: "done", Plan: plan},
+	}
+	for _, r := range []int{2, 0, 1} { // stored out of order, listed in order
+		if err := ds.SavePlanRevision(ctx, revs[r]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revs[1].State = "done"
+	if err := ds.SavePlanRevision(ctx, revs[1]); err != nil { // upsert, no duplicate
+		t.Fatal(err)
+	}
+
+	list, err := ds.ListPlanRevisions(ctx, "pl-r")
+	if err != nil || len(list) != 3 {
+		t.Fatalf("list: %d, %v", len(list), err)
+	}
+	for i, r := range list {
+		if r.Revision != i+1 || r.Plan != nil {
+			t.Errorf("entry %d: revision %d, plan %v (the list carries no plans)", i, r.Revision, r.Plan != nil)
+		}
+	}
+	if c := list[1].Change; list[1].State != "done" || c.Kind != contract.RevisionKindRegenerate || *c.Section != "warmup" || *c.Instruction != "Use bands" {
+		t.Errorf("revision 2: %+v", list[1])
+	}
+	if list[2].Change.RestoredFrom == nil || *list[2].Change.RestoredFrom != 1 || list[2].Sections != nil {
+		t.Errorf("revision 3: %+v", list[2])
+	}
+
+	got, err := ds.GetPlanRevision(ctx, "pl-r", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, ok := got.Plan["warmup"].(map[string]interface{})
+	if !ok || got.CreatedAt != "2026-11-22T10:00:00.000Z" || len(got.Sections) != 2 {
+		t.Errorf("revision 1: %+v", got)
+	}
+	if _, ok := w["blocks"].([]interface{}); !ok {
+		t.Errorf("nested plan fields must decode as plain maps and slices: %T", w["blocks"])
+	}
+	if _, err := ds.GetPlanRevision(ctx, "pl-r", 9); !errors.Is(err, ErrRevisionNotFound) {
+		t.Errorf("missing revision: %v", err)
+	}
+
+	if err := ds.DeletePlan(ctx, "pl-r"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := ds.db.Collection(revsCollection).CountDocuments(ctx, bson.M{"planId": "pl-r"}); n != 0 {
+		t.Errorf("deleting a plan must delete its revisions: %d left", n)
 	}
 }
 

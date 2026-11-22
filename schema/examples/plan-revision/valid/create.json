@@ -1,0 +1,7 @@
+{
+  "revision": 1,
+  "createdAt": "2026-11-18T05:42:10.120Z",
+  "change": { "kind": "create" },
+  "sections": ["wod", "warmup", "parts", "injuries", "timeline"],
+  "state": "done"
+}

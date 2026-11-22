@@ -13,7 +13,7 @@ import redis.asyncio as aioredis
 
 from app.llm import RouteError
 from app.mcp_tools import McpTools
-from app.models import OrchestrateRequest
+from app.models import OrchestrateRequest, RegenerateRequest
 from app.pipeline import InputError, PlanPipeline
 
 logging.basicConfig(
@@ -99,6 +99,11 @@ TOPOLOGY = {
         {"name": "InjuryAgent", "role": "injury", "section": "injuries", "after": ["WarmupPlannerAgent", "ScalingAgent"], "onlyWhen": "the comment names injuries"},
         {"name": "TimelineAgent", "role": "timeline", "section": "timeline", "after": ["WarmupPlannerAgent", "ScalingAgent"], "mcpTool": "verify_timeline_math"},
     ],
+    "refine": {
+        "root": "RefineWorkflow",
+        "sections": ["warmup", "parts", "injuries", "timeline"],
+        "then": {"warmup": "TimelineAgent, only when the warm-up minutes changed"},
+    },
 }
 
 
@@ -125,5 +130,17 @@ async def orchestrate(req: OrchestrateRequest, x_internal_gateway_token: Optiona
     _check_token(x_internal_gateway_token)
     try:
         return await pipeline.run(req, publish=event_stream.publish)
+    except (InputError, RouteError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/regenerate")
+async def regenerate(req: RegenerateRequest, x_internal_gateway_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    """Changes one section of a stored plan with the coach's instruction and returns the plan
+    at the new revision with agentRuns. Called by the gateway in the background after it
+    answered 202. A failed section is reported in sectionStatus, as for a new plan."""
+    _check_token(x_internal_gateway_token)
+    try:
+        return await pipeline.regenerate(req, publish=event_stream.publish)
     except (InputError, RouteError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

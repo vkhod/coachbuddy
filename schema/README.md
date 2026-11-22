@@ -9,6 +9,7 @@ The types in each service are generated from it and committed; nobody edits them
 | `create-plan.request.schema.json` | `POST /api/v1/plans` |
 | `regenerate-section.request.schema.json` | `POST /api/v1/plans/{id}/sections/{section}/regenerate` |
 | `plan-event.schema.json` | One SSE event on `GET /api/v1/plans/{id}/events`. `plan` carries the plan as it stands; it is typed as an object because datamodel-code-generator cannot follow a reference into another file into one module, so agents-python and the gateway validate it as a `Plan`. |
+| `plan-revision.schema.json` | One entry of `GET /api/v1/plans/{id}/revisions`: the revision number, what changed (create, regenerate with section and instruction, restore with the source revision), the sections it built, and its state. |
 | `tools.schema.json` | Inputs and outputs of the mcp-rust tools. Optional tool inputs accept `null`, because a model fills them. |
 
 ## Changing the contract

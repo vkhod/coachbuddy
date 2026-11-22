@@ -39,11 +39,15 @@ type Store interface {
 
 	CreatePlan(ctx context.Context, doc map[string]interface{}) error
 	SavePlan(ctx context.Context, planID string, doc map[string]interface{}) error
+	AdvancePlan(ctx context.Context, planID string, from int, doc map[string]interface{}) error
 	GetPlan(ctx context.Context, planID string) (map[string]interface{}, error)
 	ListPlans(ctx context.Context, coachID string) ([]map[string]interface{}, error)
 	DeletePlan(ctx context.Context, planID string) error
 	SavePlanImage(ctx context.Context, img *models.PlanImage) error
 	SaveAgentRuns(ctx context.Context, runs *models.AgentRuns) error
+	SavePlanRevision(ctx context.Context, rev *models.PlanRevision) error
+	ListPlanRevisions(ctx context.Context, planID string) ([]*models.PlanRevision, error)
+	GetPlanRevision(ctx context.Context, planID string, revision int) (*models.PlanRevision, error)
 	PlanEvents(ctx context.Context, planID string) (*store.EventStream, error)
 	PublishPlanEvent(ctx context.Context, planID string, event []byte) error
 

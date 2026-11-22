@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from app.contract.create_plan_request import CreatePlanRequest
 from app.contract.plan import Plan
 from app.contract.plan_event import PlanEvent
+from app.contract.plan_revision import PlanRevision
 from app.contract.rules import check_plan_rules
 
 EXAMPLES = Path(__file__).resolve().parents[3] / "schema" / "examples"
@@ -89,3 +90,12 @@ def test_plan_event_examples_carry_a_valid_plan() -> None:
     for path in _files("plan-event", "invalid"):
         with pytest.raises(ValidationError):
             PlanEvent.model_validate(_load(path))
+
+
+def test_plan_revision_examples() -> None:
+    assert _files("plan-revision", "valid")
+    for path in _files("plan-revision", "valid"):
+        PlanRevision.model_validate(_load(path))
+    for path in _files("plan-revision", "invalid"):
+        with pytest.raises(ValidationError):
+            PlanRevision.model_validate(_load(path))

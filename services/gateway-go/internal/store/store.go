@@ -9,6 +9,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -42,6 +43,11 @@ var (
 	ErrKeyNotFound = errors.New("api key not found")
 	// ErrPlanNotFound is returned when a plan ID has no document.
 	ErrPlanNotFound = errors.New("plan not found")
+	// ErrRevisionConflict is returned when a plan is no longer at the revision a
+	// change started from (another change got there first).
+	ErrRevisionConflict = errors.New("plan revision changed")
+	// ErrRevisionNotFound is returned when a plan has no such revision.
+	ErrRevisionNotFound = errors.New("plan revision not found")
 	// ErrLinkNotFound is returned when a share code is unknown or expired.
 	ErrLinkNotFound = errors.New("shared link expired or not found")
 )
@@ -53,6 +59,7 @@ const (
 	plansCollection  = "plans"
 	imagesCollection = "plan_images"
 	runsCollection   = "agent_runs"
+	revsCollection   = "plan_revisions"
 	// The Redis names agents-python publishes to.
 	eventsChannel  = "session:events:"
 	eventsBuffer   = "session:buffered_events:"
@@ -126,6 +133,7 @@ func Open(ctx context.Context, vault *crypto.Vault, cfg Config) (*DataStore, err
 	for coll, keys := range map[string]bson.D{
 		plansCollection: {{Key: "coachId", Value: 1}, {Key: "createdAt", Value: -1}},
 		runsCollection:  {{Key: "planId", Value: 1}, {Key: "revision", Value: 1}},
+		revsCollection:  {{Key: "planId", Value: 1}, {Key: "revision", Value: 1}},
 	} {
 		if _, err := ds.db.Collection(coll).Indexes().CreateOne(ctx, mongo.IndexModel{Keys: keys}); err != nil {
 			ds.Close()
@@ -521,10 +529,27 @@ func (ds *DataStore) CreatePlan(ctx context.Context, doc map[string]interface{})
 	return nil
 }
 
-// SavePlan replaces an existing plan. A plan deleted in the meantime is not
-// brought back: the result is ErrPlanNotFound.
+// RevisionOf reads a plan document's revision (an int, or a float64 after JSON).
+func RevisionOf(doc map[string]interface{}) int {
+	switch v := doc["revision"].(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
+// SavePlan replaces a plan while it is still at the document's revision. A plan
+// deleted in the meantime is not brought back, and a plan that has moved on to
+// another revision is not overwritten by an older job: both give ErrPlanNotFound.
 func (ds *DataStore) SavePlan(ctx context.Context, planID string, doc map[string]interface{}) error {
-	res, err := ds.db.Collection(plansCollection).ReplaceOne(ctx, bson.M{"_id": planID}, withID(doc, planID))
+	filter := bson.M{"_id": planID, "revision": RevisionOf(doc)}
+	res, err := ds.db.Collection(plansCollection).ReplaceOne(ctx, filter, withID(doc, planID))
 	if err != nil {
 		return fmt.Errorf("save plan: %w", err)
 	}
@@ -532,6 +557,23 @@ func (ds *DataStore) SavePlan(ctx context.Context, planID string, doc map[string
 		return ErrPlanNotFound
 	}
 	return nil
+}
+
+// AdvancePlan replaces a plan at revision from with doc (the next revision).
+// ErrRevisionConflict when the plan is no longer at from, ErrPlanNotFound when
+// it is gone.
+func (ds *DataStore) AdvancePlan(ctx context.Context, planID string, from int, doc map[string]interface{}) error {
+	res, err := ds.db.Collection(plansCollection).ReplaceOne(ctx, bson.M{"_id": planID, "revision": from}, withID(doc, planID))
+	if err != nil {
+		return fmt.Errorf("advance plan: %w", err)
+	}
+	if res.MatchedCount == 1 {
+		return nil
+	}
+	if _, err := ds.GetPlan(ctx, planID); err != nil {
+		return err
+	}
+	return ErrRevisionConflict
 }
 
 func (ds *DataStore) GetPlan(ctx context.Context, planID string) (map[string]interface{}, error) {
@@ -579,6 +621,9 @@ func (ds *DataStore) DeletePlan(ctx context.Context, planID string) error {
 	if _, err := ds.db.Collection(runsCollection).DeleteMany(ctx, bson.M{"planId": planID}); err != nil {
 		return fmt.Errorf("delete agent runs: %w", err)
 	}
+	if _, err := ds.db.Collection(revsCollection).DeleteMany(ctx, bson.M{"planId": planID}); err != nil {
+		return fmt.Errorf("delete plan revisions: %w", err)
+	}
 	res, err := ds.db.Collection(plansCollection).DeleteOne(ctx, bson.M{"_id": planID})
 	if err != nil {
 		return fmt.Errorf("delete plan: %w", err)
@@ -623,6 +668,102 @@ func (ds *DataStore) SaveAgentRuns(ctx context.Context, runs *models.AgentRuns) 
 		return fmt.Errorf("save agent runs: %w", err)
 	}
 	return nil
+}
+
+// SavePlanRevision records one revision of a plan (upsert by plan and number).
+// The change is stored as its JSON form, so it reads back as the contract has it.
+func (ds *DataStore) SavePlanRevision(ctx context.Context, rev *models.PlanRevision) error {
+	id := fmt.Sprintf("%s:%d", rev.PlanID, rev.Revision)
+	change := map[string]interface{}{}
+	raw, err := json.Marshal(rev.Change)
+	if err != nil {
+		return fmt.Errorf("save plan revision: %w", err)
+	}
+	if err := json.Unmarshal(raw, &change); err != nil {
+		return fmt.Errorf("save plan revision: %w", err)
+	}
+	sections := rev.Sections
+	if sections == nil {
+		sections = []string{}
+	}
+	doc := bson.M{
+		"_id":       id,
+		"planId":    rev.PlanID,
+		"coachId":   rev.CoachID,
+		"revision":  rev.Revision,
+		"createdAt": rev.CreatedAt,
+		"change":    change,
+		"sections":  sections,
+		"state":     rev.State,
+	}
+	if rev.Plan != nil {
+		doc["plan"] = rev.Plan
+	}
+	if _, err := ds.db.Collection(revsCollection).ReplaceOne(ctx, bson.M{"_id": id}, doc, options.Replace().SetUpsert(true)); err != nil {
+		return fmt.Errorf("save plan revision: %w", err)
+	}
+	return nil
+}
+
+// ListPlanRevisions returns a plan's revisions in order, without their plans.
+func (ds *DataStore) ListPlanRevisions(ctx context.Context, planID string) ([]*models.PlanRevision, error) {
+	opts := options.Find().SetSort(bson.D{{Key: "revision", Value: 1}}).SetProjection(bson.M{"plan": 0})
+	cur, err := ds.db.Collection(revsCollection).Find(ctx, bson.M{"planId": planID}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list plan revisions: %w", err)
+	}
+	var docs []map[string]interface{}
+	if err := cur.All(ctx, &docs); err != nil {
+		return nil, fmt.Errorf("list plan revisions: %w", err)
+	}
+	out := make([]*models.PlanRevision, 0, len(docs))
+	for _, d := range docs {
+		rev, err := revisionFromDoc(plainDoc(d))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rev)
+	}
+	return out, nil
+}
+
+// GetPlanRevision returns one revision with its plan (nil while it is running).
+func (ds *DataStore) GetPlanRevision(ctx context.Context, planID string, revision int) (*models.PlanRevision, error) {
+	var d map[string]interface{}
+	err := ds.db.Collection(revsCollection).FindOne(ctx, bson.M{"_id": fmt.Sprintf("%s:%d", planID, revision)}).Decode(&d)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrRevisionNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get plan revision: %w", err)
+	}
+	return revisionFromDoc(plainDoc(d))
+}
+
+func revisionFromDoc(d map[string]interface{}) (*models.PlanRevision, error) {
+	rev := &models.PlanRevision{State: fmt.Sprint(d["state"])}
+	rev.PlanID, _ = d["planId"].(string)
+	rev.CoachID, _ = d["coachId"].(string)
+	rev.CreatedAt, _ = d["createdAt"].(string)
+	rev.Revision = RevisionOf(d)
+	raw, err := json.Marshal(d["change"])
+	if err == nil {
+		err = json.Unmarshal(raw, &rev.Change)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("plan revision %s:%d: %w", rev.PlanID, rev.Revision, err)
+	}
+	if list, ok := d["sections"].([]interface{}); ok {
+		for _, s := range list {
+			if name, ok := s.(string); ok {
+				rev.Sections = append(rev.Sections, name)
+			}
+		}
+	}
+	if plan, ok := d["plan"].(map[string]interface{}); ok {
+		rev.Plan = plan
+	}
+	return rev, nil
 }
 
 // withID returns a copy of doc with MongoDB's _id set.

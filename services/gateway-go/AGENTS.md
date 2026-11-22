@@ -9,10 +9,10 @@ This directory contains `gateway-go` (`:8080`), the Go 1.27 API Gateway, JWT Aut
 - `cmd/gateway/main.go`: Entry point, HTTP server configuration, route registration, and CORS middleware.
 - `internal/auth/`: JWT (`HS256`) token generation, verification, and auth middleware.
 - `internal/crypto/`: `Vault` implementation (`vault.go`, `vault_test.go`) performing AES-256-GCM envelope encryption/decryption and key masking.
-- `internal/handlers/`: HTTP handlers. `handlers.go`: health, auth, BYOK vault and routing settings, the mcp-rust QR call. `plans.go`: asynchronous plan generation, plan read/list/delete, the SSE stream. `share.go`: share links and the athlete and coach views (`/api/v1/share/{code}`).
+- `internal/handlers/`: HTTP handlers. `handlers.go`: health, auth, BYOK vault and routing settings, the mcp-rust QR call. `plans.go`: asynchronous plan generation, plan read/list/delete, the SSE stream. `revisions.go`: section regeneration, the revision list, reading and restoring a revision. `share.go`: share links and the athlete and coach views (`/api/v1/share/{code}`).
 - `internal/contract/`: generated from `schema/` by `scripts/gen-schema` (do not edit); `contract_test.go` checks the shared examples.
 - `internal/models/`: Request/response DTOs and domain structures (`camelCase` JSON tags).
-- `internal/store/`: Storage on PostgreSQL (`pgx`: coaches, keys, agent preferences, share links), MongoDB (`plans`, `plan_images` for the screenshots, `agent_runs` for the traces) and Redis (plan progress events). All three are required; `store.Open` fails if one is unreachable. `integration_test.go` runs against real databases when the `GATEWAY_TEST_*` variables are set (CI sets them).
+- `internal/store/`: Storage on PostgreSQL (`pgx`: coaches, keys, agent preferences, share links), MongoDB (`plans`, `plan_images` for the screenshots, `agent_runs` for the traces, `plan_revisions` with one record per revision) and Redis (plan progress events). All three are required; `store.Open` fails if one is unreachable. `integration_test.go` runs against real databases when the `GATEWAY_TEST_*` variables are set (CI sets them).
 
 ---
 
@@ -34,10 +34,16 @@ This directory contains `gateway-go` (`:8080`), the Go 1.27 API Gateway, JWT Aut
    - agents-python publishes one `PlanEvent` per section to Redis, each carrying the plan as it stands. The gateway stores each valid snapshot as progress (only the gateway writes plan documents), then saves the final plan, moves `agentRuns` to `agent_runs`, and publishes the closing `plan` event. The owner and `createdAt` are always the gateway's.
    - Any failure (agents unreachable, an error status, a timeout, a plan that does not match the contract, a shutdown) marks every unfinished section `failed` with the reason and publishes `plan` `failed`. Sections that finished are kept. A plan deleted during generation stays deleted.
    - `Shutdown` (called on SIGTERM) cancels running generations and waits until they have recorded their failure, so no plan stays `pending`.
-4. **SSE Streaming**:
-   - `GET /api/v1/plans/{id}/events` checks the owner before the stream opens, replays the buffered events and ends at the `plan` event. For a finished plan whose events have expired it sends one closing event built from the stored plan.
+4. **Refinement and versions (Phase 2 step 11)**:
+   - `POST /api/v1/plans/{id}/sections/{section}/regenerate` (`warmup`, `parts`, `injuries`, `timeline`; never `wod`) validates `contract.RegenerateSectionRequest` strictly, needs a finished plan whose WOD was read (409 otherwise), moves the plan to revision n+1 with the section `pending` and its content removed, answers 202, and calls agents-python's `/api/v1/regenerate` in the background with the plan as it was at n. Same job as a new plan (`planJob`, `generate`).
+   - `GET /api/v1/plans/{id}/revisions` lists `contract.PlanRevision` entries (change, sections built, state); `GET .../revisions/{n}` returns the plan as it was; `POST .../revisions/{n}/restore` copies it into a new revision, without a model call, and publishes a closing `plan` event.
+   - Every change is a new revision; nothing is overwritten. A failed regeneration is a revision with that section failed; the earlier one can be restored.
+   - One change at a time: `AdvancePlan` moves a plan only from the revision the change started from (409 otherwise), and `SavePlan` writes only while the plan is still at the document's revision, so an older job cannot overwrite a newer revision.
+   - Agent runs are stored per revision (`agent_runs` `_id` = `planId:revision`). Deleting a plan deletes its revisions.
+5. **SSE Streaming**:
+   - `GET /api/v1/plans/{id}/events` checks the owner before the stream opens, replays the buffered events of the plan's current revision (older ones stay in the replay list and are skipped) and ends at the `plan` event. For a finished plan whose events have expired it sends one closing event built from the stored plan.
    - Ensure SSE endpoints set `Content-Type: text/event-stream`, `Cache-Control: no-cache`, and flush via `http.Flusher` on each event.
-5. **Share links**:
+6. **Share links**:
    - Both views are built by copying named fields (`share.go`), so a new plan field stays private until added there on purpose. `input` (comment, screenshot reference), section errors and agent runs are never shared. The athlete view has the WOD, the tiers and the timeline; the coach view adds the warm-up, `today`, injuries, cues, details and timeline warnings. A new link is the athlete view unless the request says `{"includeCoachNotes": true}`.
 
 ---

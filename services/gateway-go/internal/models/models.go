@@ -55,6 +55,32 @@ type OrchestrateRequest struct {
 	RoutingConfig map[string]EphemeralAgentRoute `json:"routingConfig"`
 }
 
+// RegenerateRequest is what the gateway sends to agents-python's
+// POST /api/v1/regenerate: change one section of the stored plan. Plan is the
+// plan at Revision-1, with every section it has.
+type RegenerateRequest struct {
+	PlanID        string                         `json:"planId"`
+	CoachID       string                         `json:"coachId"`
+	Revision      int                            `json:"revision"`
+	Section       string                         `json:"section"`
+	Instruction   string                         `json:"instruction"`
+	Plan          map[string]interface{}         `json:"plan"`
+	RoutingConfig map[string]EphemeralAgentRoute `json:"routingConfig"`
+}
+
+// PlanRevision is one revision of a plan (MongoDB plan_revisions): what changed,
+// the sections it built, its state, and the plan as it ended (nil while running).
+type PlanRevision struct {
+	PlanID    string
+	CoachID   string
+	Revision  int
+	CreatedAt string
+	Change    contract.RevisionChange
+	Sections  []string
+	State     string // running, done, failed
+	Plan      map[string]interface{}
+}
+
 // PlanImage is a plan's screenshot, stored once in MongoDB under Ref
 // (the plan's input.imageRef).
 type PlanImage struct {

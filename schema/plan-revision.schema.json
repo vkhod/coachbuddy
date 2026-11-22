@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cocoach.vkhod.dev/schema/plan-revision.schema.json",
+  "title": "PlanRevision",
+  "description": "One entry of GET /api/v1/plans/{id}/revisions: what one revision of a plan changed. The plan as it was at that revision is GET /api/v1/plans/{id}/revisions/{n}.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "revision",
+    "createdAt",
+    "change",
+    "sections",
+    "state"
+  ],
+  "properties": {
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "change": {
+      "$ref": "#/$defs/RevisionChange"
+    },
+    "sections": {
+      "description": "The sections this revision built: all five for a new plan, the changed section (and the timeline when a warm-up change moved its minutes) for a regeneration, none for a restore.",
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "$ref": "#/$defs/RevisionSection"
+      }
+    },
+    "state": {
+      "$ref": "#/$defs/RevisionState"
+    }
+  },
+  "$defs": {
+    "RevisionChange": {
+      "description": "create: the plan was built. regenerate: one section was built again with the instruction. restore: the plan of revision restoredFrom was copied into this revision.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RevisionKind"
+        },
+        "section": {
+          "$ref": "#/$defs/RevisionSection"
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "restoredFrom": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "RevisionKind": {
+      "type": "string",
+      "enum": [
+        "create",
+        "regenerate",
+        "restore"
+      ]
+    },
+    "RevisionSection": {
+      "type": "string",
+      "enum": [
+        "wod",
+        "warmup",
+        "parts",
+        "injuries",
+        "timeline"
+      ]
+    },
+    "RevisionState": {
+      "description": "running while its sections are built; failed when a section this revision built failed; done otherwise.",
+      "type": "string",
+      "enum": [
+        "running",
+        "done",
+        "failed"
+      ]
+    }
+  }
+}

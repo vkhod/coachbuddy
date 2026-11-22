@@ -6,6 +6,9 @@ package handlers
 //	GET  /api/v1/plans/{id}/events   SSE: one PlanEvent per section, then "plan"
 //	GET  /api/v1/plans/{id}          the plan as it stands now
 //
+// Refinement and versions (step 11) are in revisions.go. Both run through the
+// same background job (planJob), one revision at a time.
+//
 // The plan document, with its owner, is saved before the 202, so the owner
 // check on the event stream works from the first event. agents-python publishes
 // one event per section, each carrying the plan as it stands after it; the
@@ -176,9 +179,18 @@ func (h *APIHandler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job := models.OrchestrateRequest{
-		PlanID: planID, CoachID: coachID, ImageRef: imageRef, CreatedAt: now,
-		Input: input, RoutingConfig: routing,
+	job := planJob{
+		PlanID: planID, CoachID: coachID, CreatedAt: now, Revision: 1,
+		Path: "/api/v1/orchestrate",
+		Body: models.OrchestrateRequest{
+			PlanID: planID, CoachID: coachID, ImageRef: imageRef, CreatedAt: now,
+			Input: input, RoutingConfig: routing,
+		},
+		Change:   contract.RevisionChange{Kind: contract.RevisionKindCreate},
+		Sections: planSections,
+	}
+	if err := h.recordRevision(r.Context(), job, "running", nil); err != nil {
+		log.Printf("[gateway] plan %s: revision 1 not recorded: %v", planID, err)
 	}
 	h.jobs.Add(1)
 	go h.generate(job)
@@ -191,9 +203,24 @@ func (h *APIHandler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// generate runs one plan in the background. Whatever happens, the plan ends
-// with every section done, skipped or failed, and a closing "plan" event.
-func (h *APIHandler) generate(job models.OrchestrateRequest) {
+// planJob is one revision built in the background: a new plan (revision 1,
+// agents-python's /orchestrate) or a section change (/regenerate).
+type planJob struct {
+	PlanID    string
+	CoachID   string
+	CreatedAt string // the plan's, kept on every revision
+	Revision  int
+	Path      string      // agents-python endpoint
+	Body      interface{} // the request sent there
+	Change    contract.RevisionChange
+	// Sections this revision builds. A section change reports the ones that
+	// actually ran (the timeline follows a warm-up change only when needed).
+	Sections []string
+}
+
+// generate builds one revision in the background. Whatever happens, the plan
+// ends with every section done, skipped or failed, and a closing "plan" event.
+func (h *APIHandler) generate(job planJob) {
 	defer h.jobs.Done()
 	ctx, cancel := context.WithTimeout(h.jobsCtx, h.GenerateTimeout)
 	defer cancel()
@@ -234,12 +261,12 @@ func (h *APIHandler) generate(job models.OrchestrateRequest) {
 }
 
 // orchestrate calls agents-python and returns its document (the plan plus agentRuns).
-func (h *APIHandler) orchestrate(ctx context.Context, job models.OrchestrateRequest) (map[string]interface{}, error) {
-	body, err := json.Marshal(job)
+func (h *APIHandler) orchestrate(ctx context.Context, job planJob) (map[string]interface{}, error) {
+	body, err := json.Marshal(job.Body)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.AgentsServiceURL+"/api/v1/orchestrate", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.AgentsServiceURL+job.Path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -278,18 +305,19 @@ func (h *APIHandler) orchestrate(ctx context.Context, job models.OrchestrateRequ
 	return doc, nil
 }
 
-// ownPlan sets the fields only the gateway decides: the owner and creation time.
-func ownPlan(job models.OrchestrateRequest, doc map[string]interface{}) {
+// ownPlan sets the fields only the gateway decides: the owner, creation time and revision.
+func ownPlan(job planJob, doc map[string]interface{}) {
 	doc["planId"] = job.PlanID
 	doc["coachId"] = job.CoachID
 	doc["createdAt"] = job.CreatedAt
+	doc["revision"] = job.Revision
 }
 
 // storeProgress saves the snapshot carried by one section event. Anything that
 // is not a valid event with a valid plan is ignored: it is progress, not the record.
-func (h *APIHandler) storeProgress(job models.OrchestrateRequest, raw string) {
+func (h *APIHandler) storeProgress(job planJob, raw string) {
 	var evt contract.PlanEvent
-	if err := json.Unmarshal([]byte(raw), &evt); err != nil || evt.Plan == nil || evt.Section == contract.EventSectionPlan {
+	if err := json.Unmarshal([]byte(raw), &evt); err != nil || evt.Plan == nil || evt.Section == contract.EventSectionPlan || evt.Revision != job.Revision {
 		return
 	}
 	doc := map[string]interface{}(evt.Plan)
@@ -305,11 +333,14 @@ func (h *APIHandler) storeProgress(job models.OrchestrateRequest, raw string) {
 	}
 }
 
-// finishPlan stores the final plan and its agent runs, then announces it.
-func (h *APIHandler) finishPlan(ctx context.Context, job models.OrchestrateRequest, result map[string]interface{}) {
+// finishPlan stores the final plan, its revision record and agent runs, then announces it.
+func (h *APIHandler) finishPlan(ctx context.Context, job planJob, result map[string]interface{}) {
 	runs := &models.AgentRuns{
-		PlanID: job.PlanID, CoachID: job.CoachID, Revision: 1,
+		PlanID: job.PlanID, CoachID: job.CoachID, Revision: job.Revision,
 		Runs: result["agentRuns"], OrchestrationLatencyMs: result["orchestrationLatencyMs"],
+	}
+	if job.Change.Kind == contract.RevisionKindRegenerate {
+		job.Sections = sectionsRun(result["agentRuns"], job.Sections)
 	}
 	delete(result, "agentRuns")
 	delete(result, "orchestrationLatencyMs")
@@ -320,21 +351,24 @@ func (h *APIHandler) finishPlan(ctx context.Context, job models.OrchestrateReque
 		return
 	}
 	if err := h.Store.SavePlan(ctx, job.PlanID, result); err != nil {
-		if !errors.Is(err, store.ErrPlanNotFound) { // deleted while it was being built
+		if !errors.Is(err, store.ErrPlanNotFound) { // deleted, or moved on, while it was being built
 			log.Printf("[gateway] plan %s: final plan not saved: %v", job.PlanID, err)
-			h.publishEnd(ctx, job.PlanID, "failed", "the plan could not be saved; build it again", nil)
+			h.publishEnd(ctx, job.PlanID, job.Revision, "failed", "the plan could not be saved; build it again", nil)
 		}
 		return
+	}
+	if err := h.recordRevision(ctx, job, revisionState(job, result), result); err != nil {
+		log.Printf("[gateway] plan %s: revision %d not recorded: %v", job.PlanID, job.Revision, err)
 	}
 	if err := h.Store.SaveAgentRuns(ctx, runs); err != nil {
 		log.Printf("[gateway] plan %s: agent runs not saved: %v", job.PlanID, err)
 	}
-	h.publishEnd(ctx, job.PlanID, "done", "", result)
+	h.publishEnd(ctx, job.PlanID, job.Revision, "done", "", result)
 }
 
 // failPlan marks every section that has not finished as failed with the reason,
 // keeping the sections that did finish, and announces the failure.
-func (h *APIHandler) failPlan(ctx context.Context, job models.OrchestrateRequest, reason string) {
+func (h *APIHandler) failPlan(ctx context.Context, job planJob, reason string) {
 	reason = shortReason(reason)
 	doc, err := h.Store.GetPlan(ctx, job.PlanID)
 	if errors.Is(err, store.ErrPlanNotFound) {
@@ -342,7 +376,10 @@ func (h *APIHandler) failPlan(ctx context.Context, job models.OrchestrateRequest
 	}
 	if err != nil {
 		log.Printf("[gateway] plan %s: cannot record the failure: %v", job.PlanID, err)
-		h.publishEnd(ctx, job.PlanID, "failed", reason, nil)
+		h.publishEnd(ctx, job.PlanID, job.Revision, "failed", reason, nil)
+		return
+	}
+	if store.RevisionOf(doc) != job.Revision { // another revision has taken over
 		return
 	}
 	status, _ := doc["sectionStatus"].(map[string]interface{})
@@ -362,12 +399,15 @@ func (h *APIHandler) failPlan(ctx context.Context, job models.OrchestrateRequest
 	if err := h.Store.SavePlan(ctx, job.PlanID, doc); err != nil {
 		log.Printf("[gateway] plan %s: cannot record the failure: %v", job.PlanID, err)
 	}
-	h.publishEnd(ctx, job.PlanID, "failed", reason, doc)
+	if err := h.recordRevision(ctx, job, "failed", doc); err != nil {
+		log.Printf("[gateway] plan %s: revision %d not recorded: %v", job.PlanID, job.Revision, err)
+	}
+	h.publishEnd(ctx, job.PlanID, job.Revision, "failed", reason, doc)
 }
 
 // publishEnd sends the closing "plan" event that ends every event stream.
-func (h *APIHandler) publishEnd(ctx context.Context, planID, state, reason string, doc map[string]interface{}) {
-	evt := contract.PlanEvent{PlanId: planID, Revision: 1, Section: contract.EventSectionPlan, State: contract.EventState(state)}
+func (h *APIHandler) publishEnd(ctx context.Context, planID string, revision int, state, reason string, doc map[string]interface{}) {
+	evt := contract.PlanEvent{PlanId: planID, Revision: revision, Section: contract.EventSectionPlan, State: contract.EventState(state)}
 	if reason != "" {
 		r := shortReason(reason)
 		evt.Error = &r
@@ -452,16 +492,17 @@ func (h *APIHandler) DeletePlan(w http.ResponseWriter, r *http.Request) {
 
 // --- SSE progress stream ---
 
-// endsStream reports whether an event is the closing "plan" event.
-func endsStream(raw string) bool {
+// eventInfo reads an event's revision, and whether it is the closing "plan" event.
+func eventInfo(raw string) (revision int, ends bool) {
 	var evt struct {
-		Section string `json:"section"`
-		State   string `json:"state"`
+		Revision int    `json:"revision"`
+		Section  string `json:"section"`
+		State    string `json:"state"`
 	}
 	if json.Unmarshal([]byte(raw), &evt) != nil {
-		return false
+		return 0, false
 	}
-	return evt.Section == "plan" && (evt.State == "done" || evt.State == "failed")
+	return evt.Revision, evt.Section == "plan" && (evt.State == "done" || evt.State == "failed")
 }
 
 // closingEvent rebuilds the "plan" event for a finished plan from the stored document.
@@ -531,13 +572,24 @@ func (h *APIHandler) StreamPlanEvents(w http.ResponseWriter, r *http.Request) {
 		defer events.Close()
 	}
 
+	// The replay list keeps the events of earlier revisions too; a stream
+	// follows the plan's current revision only.
+	current := store.RevisionOf(doc)
+	var buffered []string
+	if events != nil {
+		for _, evt := range events.Buffered {
+			if rev, _ := eventInfo(evt); rev >= current {
+				buffered = append(buffered, evt)
+			}
+		}
+	}
+
 	// A finished plan whose events have expired (or Redis is down): one closing
 	// event with the stored plan. "failed" when no section could be built.
 	ended := false
-	if events != nil {
-		for _, evt := range events.Buffered {
-			ended = ended || endsStream(evt)
-		}
+	for _, evt := range buffered {
+		_, end := eventInfo(evt)
+		ended = ended || end
 	}
 	if !ended && planFinished(doc) {
 		raw, err := json.Marshal(closingEvent(planID, doc))
@@ -551,9 +603,9 @@ func (h *APIHandler) StreamPlanEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	startStream()
 
-	for _, evt := range events.Buffered {
+	for _, evt := range buffered {
 		send(evt)
-		if endsStream(evt) {
+		if _, end := eventInfo(evt); end {
 			return
 		}
 	}
@@ -565,8 +617,12 @@ func (h *APIHandler) StreamPlanEvents(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			rev, end := eventInfo(evt)
+			if rev < current {
+				continue
+			}
 			send(evt)
-			if endsStream(evt) {
+			if end {
 				return
 			}
 		}
