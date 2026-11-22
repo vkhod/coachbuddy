@@ -6,19 +6,12 @@ import {
   Flame,
   Users,
   Share2,
-  Play,
-  Pause,
-  SkipForward,
-  RotateCcw,
   CheckCircle2,
   AlertTriangle,
   Sparkles,
   HeartPulse,
   Wrench,
   Activity,
-  Maximize2,
-  Minimize2,
-  Radio,
   RefreshCw,
 } from "lucide-react";
 import { TimelineBlock, WodSession } from "@/lib/api";
@@ -30,12 +23,6 @@ export function formatMinRange(startMin: number, endMin: number): string {
     return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
   };
   return `${fmt(startMin)}-${fmt(endMin)}`;
-}
-
-export function formatSecondsMMSS(totalSec: number): string {
-  const mins = Math.floor(totalSec / 60);
-  const secs = totalSec % 60;
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 export function blockTypeColor(type: TimelineBlock["type"]): {
@@ -93,15 +80,6 @@ export function blockTypeColor(type: TimelineBlock["type"]): {
 export interface ActiveSessionTabProps {
   activeSession: WodSession;
   onUpdateSession: (updated: WodSession) => void;
-  floorMode: boolean;
-  setFloorMode: React.Dispatch<React.SetStateAction<boolean>>;
-  currentBlockIdx: number;
-  setCurrentBlockIdx: React.Dispatch<React.SetStateAction<number>>;
-  blockSecondsLeft: number;
-  setBlockSecondsLeft: React.Dispatch<React.SetStateAction<number>>;
-  timerRunning: boolean;
-  setTimerRunning: React.Dispatch<React.SetStateAction<boolean>>;
-  wakeLockActive: boolean;
   exerciseSubTab: Record<number, "both" | "cues" | "scaling">;
   setExerciseSubTab: React.Dispatch<
     React.SetStateAction<Record<number, "both" | "cues" | "scaling">>
@@ -118,24 +96,12 @@ export interface ActiveSessionTabProps {
 export default function ActiveSessionTab({
   activeSession,
   onUpdateSession,
-  floorMode,
-  setFloorMode,
-  currentBlockIdx,
-  setCurrentBlockIdx,
-  blockSecondsLeft,
-  setBlockSecondsLeft,
-  timerRunning,
-  setTimerRunning,
-  wakeLockActive,
   exerciseSubTab,
   setExerciseSubTab,
   scalingFilter,
   setScalingFilter,
   onOpenShare,
 }: ActiveSessionTabProps) {
-  const currentFloorBlock =
-    activeSession.timeline?.blocks?.[currentBlockIdx] || null;
-
   /**
    * Rotates `activeSession.warmup.phases[0]` (the Phase 1 Reaction Game) with the first
    * entry in `activeSession.warmup.alternativeGames`, placing the old Phase 1 game at the
@@ -194,28 +160,6 @@ export default function ActiveSessionTab({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Toggle Coach Floor Mode */}
-          <button
-            type="button"
-            onClick={() => setFloorMode((prev) => !prev)}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider border transition ${floorMode
-                ? "bg-[#F97316] text-white border-[#F97316] shadow-lg shadow-[#F97316]/25"
-                : "bg-slate-800 hover:bg-slate-700 text-[#CCFF00] border-[#CCFF00]/40"
-              }`}
-          >
-            {floorMode ? (
-              <>
-                <Minimize2 className="w-4 h-4" />
-                <span>Exit Coach Floor Mode</span>
-              </>
-            ) : (
-              <>
-                <Maximize2 className="w-4 h-4" />
-                <span>Coach Floor Mode (Live Timer)</span>
-              </>
-            )}
-          </button>
-
           {/* Share Session Button */}
           <button
             type="button"
@@ -228,111 +172,6 @@ export default function ActiveSessionTab({
         </div>
       </div>
 
-      {/* COACH FLOOR MODE HUD (Live Gym Floor Countdown Timer + WakeLock) */}
-      {floorMode && currentFloorBlock && (
-        <div className="rounded-3xl border-2 border-[#CCFF00] bg-gradient-to-br from-slate-900 via-[#0B0F17] to-slate-950 p-6 md:p-8 shadow-2xl shadow-[#CCFF00]/10">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-            <div className="flex items-center gap-2.5">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#CCFF00] text-[#0B0F17] font-mono font-black text-xs uppercase">
-                <Radio className="w-3.5 h-3.5 animate-pulse" />
-                LIVE COACH FLOOR HUD
-              </span>
-              <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-xs">
-                {wakeLockActive
-                  ? "WAKE LOCK ACTIVE • SCREEN WILL NOT SLEEP"
-                  : "WAKE LOCK READY • FLOOR TABLET MODE"}
-              </span>
-            </div>
-            <div className="text-xs font-mono text-slate-400">
-              Block {currentBlockIdx + 1} of{" "}
-              {activeSession.timeline.blocks.length}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-            {/* Giant Gym Clock */}
-            <div className="lg:col-span-5 text-center lg:text-left bg-[#0B0F17] border border-slate-800 rounded-2xl p-6">
-              <div className="text-xs font-mono uppercase text-slate-400 mb-1">
-                Block Countdown (
-                {formatMinRange(
-                  currentFloorBlock.startMin,
-                  currentFloorBlock.endMin
-                )}
-                )
-              </div>
-              <div className="text-6xl md:text-7xl font-mono font-black tracking-tight text-[#CCFF00] my-2">
-                {formatSecondsMMSS(blockSecondsLeft)}
-              </div>
-              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 mt-4">
-                <button
-                  type="button"
-                  onClick={() => setTimerRunning((r) => !r)}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-[#CCFF00] text-[#0B0F17] font-black text-sm uppercase hover:bg-[#d8ff33] transition"
-                >
-                  {timerRunning ? (
-                    <>
-                      <Pause className="w-4 h-4" />
-                      <span>Pause</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4" />
-                      <span>Start Clock</span>
-                    </>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTimerRunning(false);
-                    setCurrentBlockIdx((idx) =>
-                      activeSession.timeline.blocks.length
-                        ? (idx + 1) % activeSession.timeline.blocks.length
-                        : 0
-                    );
-                  }}
-                  className="inline-flex items-center gap-1.5 px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs uppercase border border-slate-700 transition"
-                >
-                  <SkipForward className="w-4 h-4 text-[#CCFF00]" />
-                  <span>Next Block</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTimerRunning(false);
-                    const durSec = Math.max(
-                      1,
-                      (currentFloorBlock.endMin - currentFloorBlock.startMin) *
-                      60
-                    );
-                    setBlockSecondsLeft(durSec);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold text-xs uppercase border border-slate-800 transition"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  <span>Reset</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Active Block Details & Instant Floor Notes */}
-            <div className="lg:col-span-7 space-y-4">
-              <div className="inline-block px-3 py-1 rounded-lg bg-[#F97316]/20 border border-[#F97316]/40 text-[#F97316] font-mono text-xs font-bold uppercase">
-                CURRENT FLOOR BLOCK • {currentFloorBlock.type.toUpperCase()}
-              </div>
-              <h2 className="text-2xl md:text-3xl font-black text-white">
-                {currentFloorBlock.label}
-              </h2>
-              <p className="text-base text-slate-200 bg-slate-900/90 border border-slate-800 rounded-xl p-4 leading-relaxed">
-                {currentFloorBlock.notes}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Minute-by-Minute Class Timeline Bar */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -341,9 +180,6 @@ export default function ActiveSessionTab({
             Minute-by-Minute Class Timeline (
             {activeSession.timeline.totalMinutes} Min Total)
           </h2>
-          <span className="text-xs text-slate-400">
-            Click any block to jump the Coach Floor Timer to that phase
-          </span>
         </div>
 
         {/* Proportional Visual Bar */}
@@ -356,14 +192,9 @@ export default function ActiveSessionTab({
             return (
               <div
                 key={idx}
-                onClick={() => setCurrentBlockIdx(idx)}
                 style={{ width: `${widthPct}%` }}
                 title={`${formatMinRange(blk.startMin, blk.endMin)} ${blk.label}`}
-                className={`h-full first:rounded-l-full last:rounded-r-full cursor-pointer transition-opacity ${colors.bar
-                  } ${currentBlockIdx === idx
-                    ? "opacity-100 ring-2 ring-white"
-                    : "opacity-75 hover:opacity-100"
-                  }`}
+                className={`h-full first:rounded-l-full last:rounded-r-full ${colors.bar}`}
               />
             );
           })}
@@ -373,17 +204,10 @@ export default function ActiveSessionTab({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-2.5">
           {activeSession.timeline.blocks.map((blk, idx) => {
             const colors = blockTypeColor(blk.type);
-            const isActive = currentBlockIdx === idx;
             return (
-              <button
+              <div
                 key={idx}
-                type="button"
-                onClick={() => setCurrentBlockIdx(idx)}
-                className={`text-left rounded-xl border p-3 transition flex flex-col justify-between ${colors.bg
-                  } ${isActive
-                    ? "border-[#CCFF00] ring-2 ring-[#CCFF00]/40"
-                    : colors.border
-                  }`}
+                className={`text-left rounded-xl border p-3 flex flex-col justify-between ${colors.bg} ${colors.border}`}
               >
                 <div>
                   <div className="flex items-center justify-between gap-1 mb-1">
@@ -403,7 +227,7 @@ export default function ActiveSessionTab({
                 <p className="text-[11px] text-slate-300/90 line-clamp-3 leading-snug">
                   {blk.notes}
                 </p>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -415,7 +239,7 @@ export default function ActiveSessionTab({
               <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
               <div className="space-y-1 text-xs text-amber-200">
                 <div className="font-bold uppercase font-mono text-amber-300">
-                  Rust MCP Timeline & Floor Logistics Notes
+                  Rust MCP Timeline Notes
                 </div>
                 {activeSession.timeline.coachWarnings.map((w, i) => (
                   <p key={i}>• {w}</p>

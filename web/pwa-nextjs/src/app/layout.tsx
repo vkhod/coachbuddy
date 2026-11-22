@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CoachBuddy — Tactical Box WOD Planner & Floor Companion",
+  title: "CoachBuddy — Tactical Box WOD Planner",
   description:
-    "Multi-Agent WOD Session Planner, Broomstick Warm-Up Game Generator, 4-Tier Scaling Matrix, BYOK Vault, and Live Gym Floor Timer for CrossFit Coaches.",
+    "Multi-Agent WOD Session Planner, Broomstick Warm-Up Game Generator, 4-Tier Scaling Matrix, BYOK Vault and QR Sharing for CrossFit Coaches.",
   manifest: "/manifest.json",
   icons: {
     icon: "/icon.svg",

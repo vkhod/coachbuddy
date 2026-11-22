@@ -9,14 +9,13 @@ High-contrast **Tactical Athletic Box** Next.js 14 App Router PWA for CrossFit &
   - Quick-select Warm-up & Coaching Cue style chips (*"Mostly Broomstick / PVC"*, *"Gamified / Reaction Drill"*, *"Partner Warm-up"*, *"Thoracic & Overhead Mobility"*, *"No Running / Row & Bike Only"*).
   - Class Duration Selector (`45`, `60`, `75`, `90 min` — default `60 min`).
   - Live Multi-Agent Execution Stepper tracking `WodParserAgent` $\rightarrow$ `WarmupPlannerAgent` + `ScalingAndCuesAgent` $\rightarrow$ `TimelineLogisticsAgent`.
-- **Tab 2: Active Session Plan & "Coach Floor Mode"**:
+- **Tab 2: Active Session Plan**:
   - Proportional minute-by-minute class timeline bar with feasibility badges (`OPTIMAL`, `TIGHT`, `OVERFLOW`) and logistics warnings.
-  - Toggleable **Coach Floor Mode** with a giant gym-floor countdown timer (`Play`, `Pause`, `Next Block`, `Reset`) and Browser Screen `navigator.wakeLock` integration.
   - Non-repetitive 2-phase Warm-up card (Reaction Game + PVC Broomstick Mobility Drills).
   - Interactive **4-Tier Movement Scaling Matrix** (`Rx+`, `Scaled`, `Masters / Seniors`, and `Injured Alternatives` for Wrist/Shoulder, Knee Pain, and Lower Back) + External/Internal Cues & Common Fault $\rightarrow$ Fix pairs.
   - One-click **Share Session & Rust SVG QR Code Modal** (`Co-Coach View` vs `Athlete View`).
 - **Tab 3: Session History Library**:
-  - Searchable history of generated WOD sessions with one-click load into Floor Mode.
+  - Searchable history of generated WOD sessions with one-click load into the plan view.
 - **Tab 4: BYOK Encrypted Key Vault & Per-Agent LLM Router**:
   - Manage AES-256-GCM encrypted API keys for `Google Gemini`, `OpenAI`, `Anthropic Claude`, and `Groq`.
   - Route all agents through a single Global model or configure per-agent provider/model overrides.

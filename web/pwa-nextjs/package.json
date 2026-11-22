@@ -2,7 +2,7 @@
   "name": "coachbuddy-pwa-nextjs",
   "version": "1.0.0",
   "private": true,
-  "description": "CoachBuddy Tactical Athletic Box PWA — WOD Session Planner, 4-Tier Scaling Matrix, BYOK Vault & Coach Floor Mode",
+  "description": "CoachBuddy Tactical Athletic Box PWA — WOD Session Planner, 4-Tier Scaling Matrix, BYOK Vault & QR Sharing",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",

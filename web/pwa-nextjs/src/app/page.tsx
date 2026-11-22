@@ -86,13 +86,7 @@ export default function CoachBuddyApp() {
   const [agentStepIndex, setAgentStepIndex] = useState<number>(-1);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Tab 2: Active Session & Coach Floor Mode State
-  const [floorMode, setFloorMode] = useState(false);
-  const [currentBlockIdx, setCurrentBlockIdx] = useState(0);
-  const [blockSecondsLeft, setBlockSecondsLeft] = useState(240);
-  const [timerRunning, setTimerRunning] = useState(false);
-  const [wakeLockActive, setWakeLockActive] = useState(false);
-  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+  // Tab 2: Active Session Plan State
   const [exerciseSubTab, setExerciseSubTab] = useState<
     Record<number, "both" | "cues" | "scaling">
   >({});
@@ -151,72 +145,6 @@ export default function CoachBuddyApp() {
     }
     bootstrap();
   }, []);
-
-  // Sync Floor Timer when Active Session or Block Index changes
-  useEffect(() => {
-    if (!activeSession?.timeline?.blocks?.length) return;
-    const safeIdx = Math.min(
-      currentBlockIdx,
-      activeSession.timeline.blocks.length - 1
-    );
-    const blk = activeSession.timeline.blocks[safeIdx];
-    if (blk) {
-      const durSec = Math.max(1, (blk.endMin - blk.startMin) * 60);
-      setBlockSecondsLeft(durSec);
-    }
-  }, [activeSession, currentBlockIdx]);
-
-  // Countdown Interval for Coach Floor Mode
-  useEffect(() => {
-    if (!timerRunning) return;
-    const interval = setInterval(() => {
-      setBlockSecondsLeft((prev) => {
-        if (prev <= 1) {
-          // Auto-advance to next block if available
-          if (
-            activeSession?.timeline?.blocks &&
-            currentBlockIdx < activeSession.timeline.blocks.length - 1
-          ) {
-            setCurrentBlockIdx((idx) => idx + 1);
-          } else {
-            setTimerRunning(false);
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [timerRunning, activeSession, currentBlockIdx]);
-
-  // Browser Screen WakeLock API for Coach Floor Mode
-  useEffect(() => {
-    async function requestWakeLock() {
-      if (floorMode && typeof navigator !== "undefined" && "wakeLock" in navigator) {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const sentinel = await (navigator as any).wakeLock.request("screen");
-          wakeLockRef.current = sentinel;
-          setWakeLockActive(true);
-        } catch {
-          setWakeLockActive(false);
-        }
-      } else {
-        if (wakeLockRef.current) {
-          wakeLockRef.current.release().catch(() => {});
-          wakeLockRef.current = null;
-        }
-        setWakeLockActive(false);
-      }
-    }
-    requestWakeLock();
-    return () => {
-      if (wakeLockRef.current) {
-        wakeLockRef.current.release().catch(() => {});
-        wakeLockRef.current = null;
-      }
-    };
-  }, [floorMode]);
 
   // Handlers
   const handleSelectPreset = (preset: (typeof WOD_PRESETS)[number]) => {
@@ -305,7 +233,6 @@ export default function CoachBuddyApp() {
       setTimeout(() => unsubscribe(), 3000);
       setGatewayOnline(mode === "gateway");
       setActiveSession(session);
-      setCurrentBlockIdx(0);
       setSessions((prev) => [
         session,
         ...prev.filter((s) => s.sessionId !== session.sessionId),
@@ -473,7 +400,7 @@ export default function CoachBuddyApp() {
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Tactical Box WOD Session Planner & Floor Companion
+                Tactical Box WOD Session Planner
               </p>
             </div>
           </div>
@@ -501,7 +428,7 @@ export default function CoachBuddyApp() {
               }`}
             >
               <Flame className="w-4 h-4" />
-              <span>2. Active Plan & Floor Mode</span>
+              <span>2. Active Plan</span>
             </button>
 
             <button
@@ -746,7 +673,7 @@ export default function CoachBuddyApp() {
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-5">
                 <div>
                   <label className="block text-xs font-mono uppercase text-[#CCFF00] font-bold mb-2">
-                    Coach Warm-up Style & Floor Constraints
+                    Coach Warm-up Style & Constraints
                   </label>
                   <div className="flex flex-wrap gap-1.5 mb-3">
                     {WARMUP_STYLE_CHIPS.map((chip) => (
@@ -975,7 +902,7 @@ export default function CoachBuddyApp() {
         )}
 
         {/* =========================================================
-            TAB 2: ACTIVE SESSION PLAN & "COACH FLOOR MODE"
+            TAB 2: ACTIVE SESSION PLAN
         ========================================================= */}
         {activeTab === "session" && activeSession && (
           <ActiveSessionTab
@@ -988,15 +915,6 @@ export default function CoachBuddyApp() {
                 )
               );
             }}
-            floorMode={floorMode}
-            setFloorMode={setFloorMode}
-            currentBlockIdx={currentBlockIdx}
-            setCurrentBlockIdx={setCurrentBlockIdx}
-            blockSecondsLeft={blockSecondsLeft}
-            setBlockSecondsLeft={setBlockSecondsLeft}
-            timerRunning={timerRunning}
-            setTimerRunning={setTimerRunning}
-            wakeLockActive={wakeLockActive}
             exerciseSubTab={exerciseSubTab}
             setExerciseSubTab={setExerciseSubTab}
             scalingFilter={scalingFilter}
@@ -1087,12 +1005,11 @@ export default function CoachBuddyApp() {
                         type="button"
                         onClick={() => {
                           setActiveSession(sess);
-                          setCurrentBlockIdx(0);
                           setActiveTab("session");
                         }}
                         className="flex-1 py-2 rounded-xl bg-[#CCFF00] hover:bg-[#d8ff33] text-[#0B0F17] font-bold text-xs uppercase transition"
                       >
-                        Load into Floor Mode
+                        Open Plan
                       </button>
 
                       <button
