@@ -27,7 +27,9 @@ This directory contains `gateway-go` (`:8080`), the Go 1.27 API Gateway, JWT Aut
    - Postgres, MongoDB and Redis are required in every environment. A database error is returned (500, or 503 for the event stream), never replaced by in-memory data. The only in-memory store is the fake in `internal/handlers/fake_store_test.go`.
    - The QR code comes only from mcp-rust (`/tools/qr`). If it fails, creating a share link answers 502 and saves nothing.
    - `GET /health` checks Postgres, MongoDB, Redis and mcp-rust and answers 503 if any is down. The body names the failing dependency; the reason goes to the log only.
-   - Handlers depend on the `handlers.Store` interface, implemented by `*store.DataStore`.
+   - Handlers depend on the `handlers.Store` interface, implemented by `*store.DataStore`. The test fake (`fake_store_test.go`) can fail per call: `fail`, `createPlanErr`, `savePlanErr`, `eventsErr`, `pingErrs`.
+   - MongoDB decodes nested documents as `primitive.M` / `primitive.A`, which fail a `.(map[string]interface{})` assertion. Pass every document read from MongoDB through `plainDoc` (`internal/store/store.go`) first.
+   - The generated Go request types do not reject unknown fields; handlers that decode a contract request add a strict decode.
    - Every authenticated route requires a valid token (no demo coach), and every session, share and key operation checks that the record belongs to the caller.
 3. **Plan generation (asynchronous, Phase 2 step 10)**:
    - `POST /api/v1/plans` validates the request against the contract (`contract.CreatePlanRequest`, plus a check for unknown fields), stores the screenshot under `input.imageRef`, saves the plan with its owner and every section `pending`, answers `202 {planId}`, and calls agents-python in the background (`GenerateTimeout`, 5 minutes).
@@ -57,6 +59,9 @@ go test -v ./...
 # Include the store integration tests against local databases
 GATEWAY_TEST_POSTGRES_DSN='postgres://...' GATEWAY_TEST_MONGO_URI='mongodb://...' \
 GATEWAY_TEST_REDIS_URL='redis://...' go test ./internal/store/
+
+# The store integration tests drop the Postgres tables and the MongoDB database they run against:
+# never point them at a database another check or a running gateway is using.
 
 # Start the gateway locally on :8080
 go run ./cmd/gateway

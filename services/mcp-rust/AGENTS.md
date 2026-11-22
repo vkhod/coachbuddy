@@ -28,7 +28,10 @@ This directory contains `mcp-rust` (`:8082`), a high-performance, deterministic 
 3. **MCP Errors**:
    - Unknown tool: protocol error (`McpError::invalid_params`, `-32602`). Bad arguments or a failure while running: `CallToolResult::error` with the reason, so the calling agent can read it.
    - Never return substitute output (no placeholder QR code, no empty history on failure).
-4. **Dual Interface Parity**:
+4. **Calling `/mcp`**:
+   - Clients must send `Accept: application/json, text/event-stream` (406 otherwise) and a `Host` listed in `MCP_ALLOWED_HOSTS` (default `localhost,127.0.0.1,::1,mcp-rust`; 403 otherwise).
+   - ADK's client (`mcp` 2.3.0) handshakes with `initialize` and protocol `2025-11-25`; rmcp accepts it.
+5. **Dual Interface Parity**:
    - Whenever adding or updating a tool in `src/domain/`, expose it through both the MCP JSON-RPC handler (`src/mcp.rs`) and the direct internal REST routes (`src/main.rs`), using `#[serde(rename_all = "camelCase")]` on input/output structs.
 
 ---

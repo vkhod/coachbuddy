@@ -45,6 +45,11 @@ warm-up change: WarmupPlannerAgent --+-> InjuryAgent (new warm-up lines only)
 - Injuries changed on request answer with their labels (`InjuriesRefineOut`), so the coach can add or drop one ("Add an injury: sore knee"). An injury that stays keeps its `fromComment`; a new one gets the instruction as `fromComment`.
 - Events carry the new revision. A section that starts again loses its content in the snapshots until it is done, as in a new plan.
 
+### Session state
+
+- Keys: `wod`, `warmup`, `parts`, `injuries`, `timeline` (final values), `draft:<section>` (the model's answer), `repair:<section>` (reasons for the retry), `status:<section>`, `run:<section>` (trace). The parser also writes `today` and `injuryMentions`. Refinement adds `refine` (section, instruction, comment, current value) and `kept:<section>`.
+- ADK copies agent nodes, so per-request data goes through session state, never through fields on the agents (a shared list on the agents came back empty).
+
 ## 3. Checks, repair and failure (D3)
 
 1. The model gets a relaxed schema (structure, enums, required fields; limits written as descriptions). Gemini rejects the full contract schema as too complex for constrained decoding.
@@ -56,7 +61,13 @@ warm-up change: WarmupPlannerAgent --+-> InjuryAgent (new warm-up lines only)
 7. Errors shown to the coach are at most 300 characters and never contain the key.
 8. Fields an agent must always decide (the parser's `today`, `injuries`, `warmupWishes`) are required in its output model, empty allowed. An optional field with a default can be left out by the model and then reads as "nothing" (seen live with Gemini, 2026-11-20).
 
-## 4. Commands
+## 4. Tests
+
+- `tests/fakes.py`: `ReplayModels` (recorded answers per role) and `FakeTools` (mcp-rust).
+- End to end without live calls (not a script in the repo): run this app with `PlanPipeline(tools=FakeTools(), model_factory=...)` swapped in, against real Postgres, MongoDB and Redis containers and a built gateway binary.
+- `ReplayLlm` copies its answer list, so a second request built from the same `ReplayModels` starts again from the first answer. Give each request its own script, as `test_refine.py` does. For several requests in one run against a real gateway, the model factory must hand out answers in order across requests.
+
+## 5. Commands
 
 ```bash
 pip install --require-hashes -r requirements.txt -r requirements-dev.txt
@@ -65,4 +76,4 @@ MCP_TEST_URL=http://localhost:8082 pytest   # also against a running mcp-rust
 uvicorn app.main:app --host 0.0.0.0 --port 8081
 ```
 
-Dependencies: edit `requirements.in`, then `uv pip compile requirements.in --python-version 3.12 --generate-hashes -o requirements.txt`. `google-adk`, `litellm` and `mcp` are pinned and move together.
+Dependencies: edit `requirements.in`, then `uv pip compile requirements.in --python-version 3.12 --generate-hashes -o requirements.txt`. `google-adk`, `litellm` and `mcp` are pinned and move together. `litellm==1.109.1` is above ADK 2.14.1's declared extras range (`<1.106.3`); check ADK's release notes before the next bump.

@@ -1,0 +1,3 @@
+# CoachBuddy
+
+@AGENTS.md
