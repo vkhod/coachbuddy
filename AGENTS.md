@@ -69,3 +69,15 @@ Each service directory contains its own scoped `AGENTS.md` with stack-specific c
   ```bash
   cd web/pwa-nextjs && npm run build
   ```
+
+---
+
+## 4. Pull Requests, CI and Dependencies
+
+- **Required checks on `main`** (ruleset `protect-main`): `agents-python (Python)`, `compose files`, `gateway-go (Go)`, `mcp-rust (Rust)`, `pwa-nextjs (Next.js)`, `schema (contract)`, `secret scan (gitleaks)`. The Docker build jobs in `docker-build.yml` (`changed services`, `docker build (<service>)`) are not required on purpose, because they are path-filtered.
+- Every change goes through a pull request; the owner reviews and merges. One planned step per pull request, with the decisions made in it listed in the body for review.
+- **Tests never call a real LLM.** They use recorded answers (`services/agents-python/tests/recordings/`). Live checks are manual, with a call budget agreed in advance.
+- **Dependabot** opens grouped pull requests every Monday (`.github/dependabot.yml`):
+  - Language runtimes (`golang`, `python`, `rust`, `node`) move only together with their CI pin and lock file, by hand. `requirements.txt` is locked for Python 3.12.
+  - `google-adk`, `litellm` and `mcp` move together, by hand, after reading ADK's release notes.
+  - When a grouped pull request mixes good and bad bumps, take the good ones by hand in a separate pull request and close the grouped one (as in #14).
