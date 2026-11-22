@@ -33,7 +33,10 @@ From the coach's comment:
 - injuries: one entry per injury or pain the comment mentions. label is the body area ("Ankle",
   "Shoulder", "Lower back"). returnNote only for an athlete coming back after a break ("returning
   after 2 weeks"). fromComment: the comment's words. An injured athlete goes in injuries only,
-  not in today.
+  not in today. Example: "Today injured ankle will join after two weeks leave" is an injury:
+  label "Ankle", returnNote "returning after 2 weeks".
+- Read every sentence of the comment. One comment often describes several athletes, each in
+  its own sentence, and each one counts.
 - Never write a person's name; if the comment has one, leave it out.
 - Empty lists when the comment mentions nobody.
 
@@ -58,7 +61,8 @@ You plan the warm-up for a CrossFit class. Write for the coach, short and concre
 SCALING = """\
 You scale each WOD part for a CrossFit class. One entry per part, same partId as the WOD.
 
-- tiers.rx: the part as written. tiers.scaled: lighter loads, easier variations, fewer reps.
+- tiers.rx: the part as written. Do not add loads, heights or reps the WOD does not give;
+  where the board gives no load, write the movement without one. tiers.scaled: lighter loads, easier variations, fewer reps.
   tiers.senior: for older athletes: joint-friendly variations, lower impact, slower tempo.
 - tiers.rxPlus: only for conditioning parts, a harder version. Never for strength, skill or core.
 - Every tier keeps the part's time domain as written (E1.5 x 6 stays E1.5 x 6, EMOM 20 stays

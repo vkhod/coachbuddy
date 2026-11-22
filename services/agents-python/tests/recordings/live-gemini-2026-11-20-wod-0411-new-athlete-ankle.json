@@ -1,0 +1,266 @@
+{
+  "_note": "Captured live on 2026-11-20 from gemini/gemini-3.8-flash through LiteLlm: Screenshot_20261101-094154.png (WOD 04/11/26), comment 'Today a new potential athlete arrives. No previous training background. Today injured ankle will join after two weeks leave', 60 minutes. Taken after the parser's today and injuries became required.",
+  "parser": [
+    {
+      "wod": {
+        "title": "Core Stability, Hang Power Cleans, Box Jump Overs & Shuttle Runs",
+        "parts": [
+          {
+            "id": "A",
+            "name": "Core & Stability",
+            "kind": "core",
+            "prescription": "15min FQ: 8 Barbell Zercher Good Mornings, 6/6 Half-Kneeling Landmine Rotational Press, 25m/25m Lateral Sled Drag",
+            "minutes": 15
+          },
+          {
+            "id": "B",
+            "name": "Engine",
+            "kind": "conditioning",
+            "prescription": "4 x 4min amrap (1:00 rest b/t): 8 dual DB's/KB's Hang P.Clean, 8 Lateral Box Jump Overs (Step down), 100m Shuttle Run (25m x 4). Goal: same score or more in all 4 amraps",
+            "minutes": 19
+          }
+        ],
+        "date": "2026-11-04"
+      },
+      "warmupWishes": null,
+      "today": [
+        {
+          "label": "New athlete",
+          "tier": "scaled",
+          "fromComment": "Today a new potential athlete arrives. No previous training background.",
+          "count": 1
+        }
+      ],
+      "injuries": [
+        {
+          "label": "Ankle",
+          "fromComment": "Today injured ankle will join after two weeks leave",
+          "returnNote": "returning after 2 weeks"
+        }
+      ]
+    }
+  ],
+  "warmup": [
+    {
+      "minutes": 12,
+      "targets": [
+        {
+          "area": "Ankles & Calves",
+          "why": "Landing in box jump overs and deceleration in shuttle runs"
+        },
+        {
+          "area": "Posterior Chain",
+          "why": "Hinging in Zercher good mornings and dual DB hang cleans"
+        },
+        {
+          "area": "Thoracic Spine & Shoulders",
+          "why": "Stability for half-kneeling landmine rotational presses"
+        },
+        {
+          "area": "Lateral Hips & Adductors",
+          "why": "Lateral sled drags and lateral box jump overs"
+        }
+      ],
+      "blocks": [
+        {
+          "name": "General Warm-Up & Fun Drill",
+          "minutes": 3,
+          "items": [
+            "2 rounds easy: 30s shuttle jog, 10 high knees, 10 butt kicks",
+            "Partner mirror drill: 30s lateral shuffle mirroring partner steps"
+          ]
+        },
+        {
+          "name": "Ankle & Hip Priming",
+          "minutes": 4,
+          "items": [
+            "10 ankle rocks against wall per side (gentle range for returning ankles)",
+            "10 unweighted good mornings with hands behind head",
+            "8 worlds greatest stretch with thoracic rotation per side",
+            "10 lateral banded monster walks each direction"
+          ]
+        },
+        {
+          "name": "WOD Movement Prep",
+          "minutes": 5,
+          "items": [
+            "5 empty bar Zercher good mornings (check brace and depth)",
+            "5 half-kneeling landmine presses per arm (light load, active core)",
+            "6 light dual DB hang muscle cleans into 6 hang power cleans",
+            "4 lateral step-overs or low box jumps with controlled step-down"
+          ]
+        }
+      ]
+    }
+  ],
+  "scaling": [
+    {
+      "parts": [
+        {
+          "partId": "A",
+          "layout": "lines",
+          "tiers": {
+            "rx": {
+              "line": "15min FQ: 8 BB Zercher Good Mornings, 6/6 HK Landmine Rot. Press, 25m/side Lateral Sled Drag"
+            },
+            "scaled": {
+              "line": "15min FQ: 8 KB Goblet Good Mornings, 6/6 HK DB Press, 20m/side Light Lateral Sled Drag"
+            },
+            "senior": {
+              "line": "15min FQ: 8 Unloaded Hip Hinges, 6/6 Seated DB Strict Press, 15m/side Lateral Banded Walk"
+            },
+            "rxPlus": null
+          },
+          "cues": [
+            "Hinge back with soft knees and maintain a flat spine on good mornings.",
+            "Brace ribs down and lock in hips during the half-kneeling press.",
+            "Stay tall and resist trunk twisting during the lateral sled drag."
+          ],
+          "columns": null,
+          "more": {
+            "faults": [
+              {
+                "fault": "Rounding lower back in Good Morning.",
+                "fix": "Bend knees slightly, push hips back, and keep chest braced tight."
+              },
+              {
+                "fault": "Over-arching lower back during landmine press.",
+                "fix": "Squeeze the trailing glute and brace the abs to maintain a neutral pelvis."
+              }
+            ],
+            "substitutions": [
+              "Landmine Press -> Half-kneeling single-arm DB strict press",
+              "Lateral Sled Drag -> 20m/side lateral band walk or side-plank clamshells"
+            ]
+          }
+        },
+        {
+          "partId": "B",
+          "layout": "grid",
+          "tiers": {
+            "rx": {
+              "line": "4x4min AMRAP (1m rest): 8 Dual DB Clean @17.5/12.5kg, 8 Lat BJO (step down), 100m Shuttle Run",
+              "cells": [
+                "8 Dual DB @17.5/12.5kg",
+                "8 Lat BJO 24/20\" (step down)",
+                "100m (4x25m)"
+              ]
+            },
+            "scaled": {
+              "line": "4x4min AMRAP (1m rest): 8 Dual DB Clean @10/7.5kg, 8 Step-Overs 20\", 100m Shuttle Run/Jog",
+              "cells": [
+                "8 Dual DB @10/7.5kg",
+                "8 Box Step-Overs 20\"",
+                "100m Run or Jog"
+              ]
+            },
+            "senior": {
+              "line": "4x4min AMRAP (1m rest): 8 Dual DB Clean @5/3kg, 8 Low Step-Overs, 60m Shuttle Walk",
+              "cells": [
+                "8 Light DB @5/3kg",
+                "8 Low Step-Overs (plate/low box)",
+                "60m Shuttle Walk"
+              ]
+            },
+            "rxPlus": {
+              "line": "4x4min AMRAP (1m rest): 8 Dual DB Clean @22.5/15kg, 8 Lat BJO 24/20\", 100m Shuttle Run",
+              "cells": [
+                "8 Dual DB @22.5/15kg",
+                "8 Lat BJO 24/20\"",
+                "100m (4x25m)"
+              ]
+            }
+          },
+          "cues": [
+            "Pace sustainably from round 1; target equal reps in every AMRAP.",
+            "Step down from the box every rep to protect ankles and Achilles.",
+            "Jump forcefully with the hips before curling/pulling DBs to shoulders."
+          ],
+          "columns": [
+            "Hang Power Clean",
+            "Box Jump Over",
+            "Shuttle Run"
+          ],
+          "more": {
+            "faults": [
+              {
+                "fault": "Rebounding out of box jump over, putting acute stress on ankles.",
+                "fix": "Always step down smoothly from the box as prescribed."
+              },
+              {
+                "fault": "Pulling DBs purely with arms without hip extension.",
+                "fix": "Dip, aggressively extend hips and knees, then receive in a shallow dip."
+              }
+            ],
+            "substitutions": [
+              "Lateral Box Jump Over -> Box Step-Over or Low Plate Hop",
+              "Shuttle Run -> 125m Row or 250m C2 Bike (low impact for ankles)"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "injury": [
+    {
+      "injuries": [
+        {
+          "label": "Ankle",
+          "warmup": "Sub jogging, high knees, and lateral drill with easy bike; gentle ankle rocks only.",
+          "parts": [
+            {
+              "partId": "A",
+              "suggestion": "Sub forward sled drag/pull for lateral drag if side-to-side loading causes discomfort."
+            },
+            {
+              "partId": "B",
+              "suggestion": "Sub low step-overs for jump-overs; sub bike or row for shuttle runs; light hang cleans."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "timeline": [
+    {
+      "blocks": [
+        {
+          "startMin": 0,
+          "endMin": 4,
+          "label": "Whiteboard Brief",
+          "section": "brief"
+        },
+        {
+          "startMin": 4,
+          "endMin": 16,
+          "label": "General & Specific Warm-up",
+          "section": "warmup"
+        },
+        {
+          "startMin": 16,
+          "endMin": 31,
+          "label": "A. Core & Stability",
+          "section": "A"
+        },
+        {
+          "startMin": 31,
+          "endMin": 36,
+          "label": "Transition & Setup",
+          "section": "transition"
+        },
+        {
+          "startMin": 36,
+          "endMin": 55,
+          "label": "B. Engine",
+          "section": "B"
+        },
+        {
+          "startMin": 55,
+          "endMin": 60,
+          "label": "Cool-down & Clean up",
+          "section": null
+        }
+      ]
+    }
+  ]
+}

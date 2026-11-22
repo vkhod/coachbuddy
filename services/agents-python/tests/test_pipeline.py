@@ -218,17 +218,36 @@ async def test_limit_the_model_was_not_forced_to_keep_is_repaired():
     assert "parts.1.tiers.senior.line: String should have at most 100 characters" in models.models["scaling"].instructions()[1]
 
 
-async def test_live_gemini_recording_replays_into_a_valid_plan():
+async def test_live_gemini_recording_1811_two_injuries():
     """Real answers from gemini-3.8-flash for the 18/11 screenshot pass every check unchanged."""
-    models = ReplayModels(load_recording("live-gemini-3.8-flash-2026-11-18.json"))
-    doc = await run(models, req=request(comment="I have a mood for a game like warmup"))
-    assert states(doc) == {"wod": "done", "warmup": "done", "parts": "done", "injuries": "skipped", "timeline": "done"}
+    models = ReplayModels(load_recording("live-gemini-2026-11-20-wod-1811-two-injuries.json"))
+    doc = await run(models, req=request(comment="senior athlete today. ankle injury returning after 2 weeks, one shoulder tear"))
+    assert states(doc) == {"wod": "done", "warmup": "done", "parts": "done", "injuries": "done", "timeline": "done"}
     assert [p["minutes"] for p in doc["wod"]["parts"]] == [9, 10, 20]
     engine = [p for p in doc["parts"] if p["partId"] == "C"][0]
     assert engine["layout"] == "grid" and len(engine["columns"]) == 4
-    runs = {r["section"]: r for r in doc["agentRuns"]}
-    assert runs["injuries"]["state"] == "skipped" and runs["injuries"]["attempts"] == 0
-    assert all(r["attempts"] == 1 for r in runs.values() if r["state"] == "done")
+    assert [i["label"] for i in doc["injuries"]] == ["Ankle", "Shoulder"]
+    assert doc["today"][0]["tier"] == "senior"
+    assert all(r["attempts"] == 1 for r in doc["agentRuns"])
+
+
+async def test_live_gemini_recording_0411_new_athlete_and_returning_ankle():
+    models = ReplayModels(load_recording("live-gemini-2026-11-20-wod-0411-new-athlete-ankle.json"))
+    doc = await run(models, req=request(comment="Today a new potential athlete arrives. No previous training background. Today injured ankle will join after two weeks leave"))
+    assert states(doc) == {"wod": "done", "warmup": "done", "parts": "done", "injuries": "done", "timeline": "done"}
+    assert [(p["id"], p["kind"], p["minutes"]) for p in doc["wod"]["parts"]] == [("A", "core", 15), ("B", "conditioning", 19)]
+    assert [(t["label"], t["tier"]) for t in doc["today"]] == [("New athlete", "scaled")]
+    assert [(i["label"], i["returnNote"]) for i in doc["injuries"]] == [("Ankle", "returning after 2 weeks")]
+
+
+async def test_parser_answer_without_the_injuries_key_is_repaired():
+    """Live on 2026-11-20 Gemini left the key out; that must not read as "no injuries"."""
+    good = injury_script()["parser"][0]
+    missing = {k: v for k, v in good.items() if k != "injuries"}
+    models = ReplayModels(injury_script(parser=[missing, good]))
+    doc = await run(models, req=request(comment=TWO_INJURIES))
+    assert states(doc)["injuries"] == "done"
+    assert "injuries: Field required" in models.models["parser"].instructions()[1]
 
 
 # --- Step 9: today groups and injuries ------------------------------------------------
