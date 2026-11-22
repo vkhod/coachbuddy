@@ -37,6 +37,10 @@ func TestPlanEventExamples(t *testing.T) {
 	})
 }
 
+func TestPlanRevisionExamples(t *testing.T) {
+	checkExamples(t, "plan-revision", func(raw []byte) error { var r PlanRevision; return json.Unmarshal(raw, &r) })
+}
+
 func checkExamples(t *testing.T, name string, decode func([]byte) error) {
 	t.Helper()
 	for _, kind := range []string{"valid", "invalid"} {

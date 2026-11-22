@@ -105,3 +105,25 @@ async def test_endpoint_turns_bad_input_into_400(monkeypatch):
 async def test_health():
     data = await main.health_check()
     assert data["status"] == "ok" and data["mcpRustUrl"].endswith("/mcp")
+
+
+def _regen(plan=None, section="warmup"):
+    from app.models import RegenerateRequest
+
+    return RegenerateRequest(
+        planId="pl_test01", coachId="c_01", revision=2, section=section, instruction="Shorter",
+        plan=plan if plan is not None else {"planId": "pl_test01"},
+        routingConfig={"global": EphemeralAgentRoute(provider="gemini", model="gemini/gemini-3.8-flash", apiKey="k")},
+    )
+
+
+async def test_regenerate_endpoint_checks_the_internal_token():
+    with pytest.raises(HTTPException) as exc:
+        await main.regenerate(_regen(), x_internal_gateway_token="wrong")
+    assert exc.value.status_code == 403
+
+
+async def test_regenerate_endpoint_turns_an_invalid_stored_plan_into_400():
+    with pytest.raises(HTTPException) as exc:
+        await main.regenerate(_regen(), x_internal_gateway_token=main.INTERNAL_GATEWAY_TOKEN)
+    assert exc.value.status_code == 400 and "the stored plan is not valid" in exc.value.detail

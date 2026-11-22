@@ -6,7 +6,7 @@ stays out of the public schema: the decrypted keys must never appear in a public
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Any, Dict, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
@@ -33,4 +33,22 @@ class OrchestrateRequest(BaseModel):
     # The plan's createdAt, set by the gateway when it accepted the request.
     createdAt: str = Field(..., min_length=1)
     input: CreatePlanRequest
+    routingConfig: Dict[str, EphemeralAgentRoute] = Field(default_factory=dict)
+
+
+class RegenerateRequest(BaseModel):
+    """POST /api/v1/regenerate: change one section of a stored plan.
+
+    `plan` is the plan as stored at the revision being changed (revision - 1), with every
+    section it has. The coach's part is the contract's RegenerateSectionRequest
+    (`instruction`); the rest is the gateway's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    planId: str = Field(..., min_length=1, max_length=64)
+    coachId: str = Field(..., min_length=1, max_length=64)
+    revision: int = Field(..., ge=2)
+    section: Literal["warmup", "parts", "injuries", "timeline"]
+    instruction: str = Field(..., min_length=1, max_length=500)
+    plan: Dict[str, Any]
     routingConfig: Dict[str, EphemeralAgentRoute] = Field(default_factory=dict)

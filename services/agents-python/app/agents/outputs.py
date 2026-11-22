@@ -56,3 +56,33 @@ class ScalingOut(BaseModel):
 class TimelineDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     blocks: list[TimelineBlock] = Field(..., min_length=1, max_length=15)
+
+
+class InjuryRefineAdvice(BaseModel):
+    """An injury in a refinement turn: the coach may add or drop injuries in the
+    instruction, so the label and return note come from the answer here."""
+
+    model_config = ConfigDict(extra="forbid")
+    label: constr(min_length=1, max_length=40) = Field(..., description='Body area, for example "Ankle". Keep the label of an injury that stays.')
+    returnNote: constr(max_length=60) | None = Field(..., description='For an athlete coming back, for example "returning after 2 weeks". Null otherwise.')
+    warmup: constr(min_length=1, max_length=100)
+    parts: list[InjuryPart] = Field(..., max_length=6)
+
+
+class InjuriesRefineOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    injuries: list[InjuryRefineAdvice] = Field(..., max_length=6, description="Empty list when the coach removes every injury.")
+
+
+class InjuryWarmupLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: constr(min_length=1, max_length=40) = Field(..., description="The injury's label, as in the current list.")
+    warmup: constr(min_length=1, max_length=100)
+
+
+class InjuryWarmupLinesOut(BaseModel):
+    """After a warm-up change: one new warm-up line per stored injury. The part
+    suggestions and everything else stay as stored."""
+
+    model_config = ConfigDict(extra="forbid")
+    injuries: list[InjuryWarmupLine] = Field(..., max_length=6, description="One entry per injury, same labels and order as the current list.")

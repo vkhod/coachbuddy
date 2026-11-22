@@ -20,6 +20,7 @@ type fakeStore struct {
 	plans       map[string]map[string]interface{}
 	images      map[string]*models.PlanImage
 	runs        map[string]*models.AgentRuns
+	revisions   map[string]map[int]*models.PlanRevision
 	links       map[string]*models.SharedLink
 	events      map[string][]string
 	subscribers map[string][]chan string
@@ -42,6 +43,7 @@ func newFakeStore() *fakeStore {
 		plans:       map[string]map[string]interface{}{},
 		images:      map[string]*models.PlanImage{},
 		runs:        map[string]*models.AgentRuns{},
+		revisions:   map[string]map[int]*models.PlanRevision{},
 		links:       map[string]*models.SharedLink{},
 		events:      map[string][]string{},
 		subscribers: map[string][]chan string{},
@@ -128,12 +130,82 @@ func (f *fakeStore) SavePlan(_ context.Context, id string, doc map[string]interf
 	if f.savePlanErr != nil {
 		return f.savePlanErr
 	}
-	if _, ok := f.plans[id]; !ok {
+	// Like MongoDB's filter on _id and revision: a deleted plan, or one that has
+	// moved to another revision, is not written.
+	if cur, ok := f.plans[id]; !ok || store.RevisionOf(cur) != store.RevisionOf(doc) {
 		return store.ErrPlanNotFound
 	}
 	f.plans[id] = copyDoc(doc)
 	f.savedPlans = append(f.savedPlans, copyDoc(doc))
 	return nil
+}
+
+func (f *fakeStore) AdvancePlan(_ context.Context, id string, from int, doc map[string]interface{}) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	cur, ok := f.plans[id]
+	if !ok {
+		return store.ErrPlanNotFound
+	}
+	if store.RevisionOf(cur) != from {
+		return store.ErrRevisionConflict
+	}
+	f.plans[id] = copyDoc(doc)
+	return nil
+}
+
+func (f *fakeStore) SavePlanRevision(_ context.Context, rev *models.PlanRevision) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	cp := *rev
+	if rev.Plan != nil {
+		cp.Plan = copyDoc(rev.Plan)
+	}
+	if f.revisions[rev.PlanID] == nil {
+		f.revisions[rev.PlanID] = map[int]*models.PlanRevision{}
+	}
+	f.revisions[rev.PlanID][rev.Revision] = &cp
+	return nil
+}
+
+func (f *fakeStore) ListPlanRevisions(_ context.Context, id string) ([]*models.PlanRevision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	var out []*models.PlanRevision
+	for n := 1; n <= len(f.revisions[id])+64; n++ {
+		if rev, ok := f.revisions[id][n]; ok {
+			cp := *rev
+			cp.Plan = nil
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetPlanRevision(_ context.Context, id string, n int) (*models.PlanRevision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	rev, ok := f.revisions[id][n]
+	if !ok {
+		return nil, store.ErrRevisionNotFound
+	}
+	cp := *rev
+	if rev.Plan != nil {
+		cp.Plan = copyDoc(rev.Plan)
+	}
+	return &cp, nil
 }
 
 func (f *fakeStore) GetPlan(_ context.Context, id string) (map[string]interface{}, error) {
@@ -174,6 +246,7 @@ func (f *fakeStore) DeletePlan(_ context.Context, id string) error {
 		return store.ErrPlanNotFound
 	}
 	delete(f.plans, id)
+	delete(f.revisions, id)
 	return nil
 }
 

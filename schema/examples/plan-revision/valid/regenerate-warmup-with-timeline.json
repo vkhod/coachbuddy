@@ -1,0 +1,7 @@
+{
+  "revision": 3,
+  "createdAt": "2026-11-18T06:02:55.010Z",
+  "change": { "kind": "regenerate", "section": "warmup", "instruction": "Shorter. Use bands" },
+  "sections": ["warmup", "timeline"],
+  "state": "done"
+}

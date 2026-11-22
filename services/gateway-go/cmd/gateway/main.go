@@ -116,6 +116,10 @@ func main() {
 	authMux.HandleFunc("DELETE /api/v1/plans/{id}", api.DeletePlan)
 	authMux.HandleFunc("GET /api/v1/plans/{id}/events", api.StreamPlanEvents)
 	authMux.HandleFunc("POST /api/v1/plans/{id}/share", api.CreateShareLink)
+	authMux.HandleFunc("POST /api/v1/plans/{id}/sections/{section}/regenerate", api.RegenerateSection)
+	authMux.HandleFunc("GET /api/v1/plans/{id}/revisions", api.ListRevisions)
+	authMux.HandleFunc("GET /api/v1/plans/{id}/revisions/{n}", api.GetRevision)
+	authMux.HandleFunc("POST /api/v1/plans/{id}/revisions/{n}/restore", api.RestoreRevision)
 
 	mux.Handle("/api/v1/", tm.Middleware()(authMux))
 

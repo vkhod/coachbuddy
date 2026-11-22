@@ -1,4 +1,4 @@
-"""The plan pipeline on Google ADK (D4).
+"""The plan pipeline on Google ADK (D4), and refinement of one section (step 11).
 
 Built per request, because every agent's model is bound to that request's key:
 
@@ -9,6 +9,11 @@ Warm-up and Scaling run in parallel, then Injury and Timeline (the timeline does
 the injury blocks). The parser also reads who attends today (`today`) and the injuries from
 the comment. ADK's Workflow replaces the deprecated SequentialAgent/ParallelAgent
 (capability report, decision 5.1).
+
+Refinement runs one section again with the stored plan in session state and the coach's
+instruction. After a warm-up change the Injury section writes new warm-up lines for the
+stored injuries, and the Timeline section rebuilds when the warm-up minutes changed
+(plan 2.3); both run in parallel and keep the stored section when there is nothing to do.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import copy
 from datetime import datetime, timezone
 import logging
 import re
@@ -32,7 +38,7 @@ from app.contract.plan import Plan
 from app.contract.plan_event import PlanEvent
 from app.llm import ModelFactory, RouteError, litellm_model, resolve_route
 from app.mcp_tools import Tools
-from app.models import OrchestrateRequest
+from app.models import OrchestrateRequest, RegenerateRequest
 
 logger = logging.getLogger("coachbuddy.pipeline")
 
@@ -102,26 +108,8 @@ class PlanPipeline:
             "createdAt": req.createdAt,
             "updatedAt": req.createdAt,
         }
-        # Warm-up and Scaling finish concurrently: one at a time, so a snapshot sent later
-        # never lacks a section an earlier one had.
-        lock = asyncio.Lock()
-
-        async def notify(section: str, state: str, error: Optional[str], content: Optional[Dict[str, Any]] = None) -> None:
-            async with lock:
-                doc["sectionStatus"][section] = {"state": state, **({"error": error} if error else {})}
-                for key, value in (content or {}).items():
-                    if key in PLAN_FIELDS and value is not None:
-                        if key == "today" and not value:
-                            continue
-                        doc[key] = value
-                doc["updatedAt"] = datetime.now(timezone.utc).isoformat()
-                if publish is None:
-                    return
-                snapshot = Plan.model_validate(doc).model_dump(mode="json", exclude_none=True)
-                event = PlanEvent(planId=plan_id, revision=1, section=section, state=state, error=error, plan=snapshot)
-                await publish(plan_id, event.model_dump(mode="json", exclude_none=True))
-
-        node = {s: build_section(s, routes[s], self.model_factory, self.tools, notify) for s in routes}
+        progress = Progress(doc, publish)
+        node = {s: build_section(s, routes[s], self.model_factory, self.tools, progress.notify) for s in routes}
         join = JoinNode(name="CoachingDone")
         workflow = Workflow(
             name="PlanWorkflow",
@@ -134,29 +122,17 @@ class PlanPipeline:
                 (join, node["timeline"]),
             ],
         )
-
-        sessions = InMemorySessionService()
-        session = await sessions.create_session(
-            app_name=APP_NAME,
-            user_id=req.coachId,
-            session_id=plan_id,
-            state={"coachId": req.coachId, "classMinutes": req.input.classMinutes, "hasImage": True},
-        )
-        runner = Runner(app_name=APP_NAME, agent=workflow, session_service=sessions)
-        started = time.perf_counter()
-        async for _ in runner.run_async(user_id=req.coachId, session_id=session.id, new_message=message):
-            pass
-        session = await sessions.get_session(app_name=APP_NAME, user_id=req.coachId, session_id=session.id)
-        state = session.state if session else {}
+        state = {"coachId": req.coachId, "classMinutes": req.input.classMinutes, "hasImage": True}
+        state, latency = await self._run_workflow(workflow, req.coachId, plan_id, state, message)
 
         # The final document comes from the session state, the record of what each section
         # produced; events are progress only.
         status: Dict[str, Dict[str, Any]] = {}
         for section in SECTIONS:
             status[section] = state.get(f"status:{section}") or {"state": "failed", "error": "the section did not run"}
-        doc = {k: v for k, v in doc.items() if k not in PLAN_FIELDS}
+        doc = {k: v for k, v in progress.doc.items() if k not in PLAN_FIELDS}
         doc["sectionStatus"] = status
-        doc["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        doc["updatedAt"] = _now()
         if status["wod"]["state"] == "done" and state.get("today"):
             doc["today"] = state["today"]
         for section in SECTIONS:
@@ -166,5 +142,137 @@ class PlanPipeline:
         # Our own output must satisfy the contract; anything else is a bug here, not a model error.
         Plan.model_validate(doc)
         doc["agentRuns"] = [state[f"run:{s}"] for s in SECTIONS if state.get(f"run:{s}")]
-        doc["orchestrationLatencyMs"] = int((time.perf_counter() - started) * 1000)
+        doc["orchestrationLatencyMs"] = latency
         return doc
+
+    async def regenerate(self, req: RegenerateRequest, publish: Optional[EventPublisher] = None) -> Dict[str, Any]:
+        """Builds one section again with the coach's instruction and returns the plan at
+        req.revision plus agentRuns. The other sections are kept as stored. A warm-up change
+        is followed by new injury warm-up lines (when there are injuries) and by the timeline
+        (when the warm-up minutes changed). A retry of a failed section shows the model why
+        the last attempt failed."""
+        try:
+            Plan.model_validate(req.plan)
+            # The stored values as they are: a round trip would rewrite createdAt's format.
+            before = copy.deepcopy(req.plan)
+        except ValueError as exc:
+            raise InputError(f"the stored plan is not valid: {exc}") from exc
+        if before["planId"] != req.planId or before["coachId"] != req.coachId:
+            raise InputError("the stored plan belongs to another plan or coach")
+        if before["sectionStatus"]["wod"]["state"] != "done" or "wod" not in before:
+            raise InputError("the WOD could not be read for this plan; build the plan again")
+
+        section = req.section
+        # A warm-up change carries on to what depends on the warm-up: the injury warm-up
+        # lines and the timeline. Each is kept as stored when it has nothing to change.
+        run_sections = ["warmup", "injuries", "timeline"] if section == "warmup" else [section]
+        routes = {s: resolve_route(role_for(s), req.routingConfig) for s in run_sections}
+
+        comment = before["input"].get("comment", "")
+        mentions = [
+            {"label": i["label"], "fromComment": i["fromComment"], **({"returnNote": i["returnNote"]} if i.get("returnNote") else {})}
+            for i in before.get("injuries", [])
+        ]
+        state: Dict[str, Any] = {
+            "coachId": req.coachId,
+            "classMinutes": before["input"]["classMinutes"],
+            "hasImage": False,
+            "today": before.get("today", []),
+            "injuryMentions": mentions,
+            "warmupWishes": None,
+            **{s: before[s] for s in ("wod", "warmup", "parts", "injuries", "timeline") if s in before and s != section},
+            "refine": {
+                "section": section,
+                "instruction": req.instruction.strip(),
+                "comment": comment,
+                "current": before.get(section),
+                "previousError": before["sectionStatus"][section].get("error") if before["sectionStatus"][section]["state"] == "failed" else None,
+                "warmupMinutesBefore": (before.get("warmup") or {}).get("minutes"),
+                "timelineBefore": before.get("timeline"),
+            },
+        }
+
+        doc = copy.deepcopy(before)
+        doc["revision"] = req.revision
+        doc.pop(section, None)
+        doc["sectionStatus"][section] = {"state": "pending"}
+        doc["updatedAt"] = _now()
+        progress = Progress(doc, publish, revision=req.revision)
+
+        node = {s: build_section(s, routes[s], self.model_factory, self.tools, progress.notify, refine=section) for s in run_sections}
+        edges = [(START, node[section])]
+        if section == "warmup":
+            edges += [(node["warmup"], node["injuries"]), (node["warmup"], node["timeline"])]
+        workflow = Workflow(name="RefineWorkflow", edges=edges)
+        message = types.Content(role="user", parts=[types.Part(text=f"Change the {section} section: {req.instruction.strip()}")])
+        state, latency = await self._run_workflow(workflow, req.coachId, f"{req.planId}:{req.revision}", state, message)
+
+        doc = progress.doc
+        doc["updatedAt"] = _now()
+        ran = []
+        for s in run_sections:
+            if state.get(f"kept:{s}"):
+                continue
+            ran.append(s)
+            status = state.get(f"status:{s}") or {"state": "failed", "error": "the section did not run"}
+            doc["sectionStatus"][s] = status
+            doc.pop(s, None)
+            if status["state"] == "done" and state.get(s) is not None:
+                doc[s] = state[s]
+        if doc["sectionStatus"]["warmup"]["state"] != "done" and "timeline" in doc:
+            doc["timeline"] = {**doc["timeline"], "provisional": True}
+
+        Plan.model_validate(doc)
+        doc["agentRuns"] = [state[f"run:{s}"] for s in ran if state.get(f"run:{s}")]
+        doc["orchestrationLatencyMs"] = latency
+        return doc
+
+    async def _run_workflow(
+        self, workflow: Workflow, user_id: str, session_id: str, state: Dict[str, Any], message: types.Content
+    ) -> Tuple[Dict[str, Any], int]:
+        sessions = InMemorySessionService()
+        session = await sessions.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id, state=state)
+        runner = Runner(app_name=APP_NAME, agent=workflow, session_service=sessions)
+        started = time.perf_counter()
+        async for _ in runner.run_async(user_id=user_id, session_id=session.id, new_message=message):
+            pass
+        session = await sessions.get_session(app_name=APP_NAME, user_id=user_id, session_id=session.id)
+        return (session.state if session else {}), int((time.perf_counter() - started) * 1000)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class Progress:
+    """The plan as it stands while sections run, published after every section change.
+
+    Warm-up and Scaling finish concurrently: one at a time, so a snapshot sent later never
+    lacks a section an earlier one had. A section that starts again (refinement) loses its
+    old content until it is done, as in a new plan."""
+
+    def __init__(self, doc: Dict[str, Any], publish: Optional[EventPublisher], revision: int = 1) -> None:
+        self.doc = doc
+        self.publish = publish
+        self.revision = revision
+        self.lock = asyncio.Lock()
+
+    async def notify(self, section: str, state: str, error: Optional[str], content: Optional[Dict[str, Any]] = None) -> None:
+        doc = self.doc
+        async with self.lock:
+            doc["sectionStatus"][section] = {"state": state, **({"error": error} if error else {})}
+            if state != "done":
+                doc.pop(section, None)
+            if section == "warmup" and state == "failed" and "timeline" in doc:
+                doc["timeline"] = {**doc["timeline"], "provisional": True}
+            for key, value in (content or {}).items():
+                if key in PLAN_FIELDS and value is not None:
+                    if key == "today" and not value:
+                        continue
+                    doc[key] = value
+            doc["updatedAt"] = _now()
+            if self.publish is None:
+                return
+            snapshot = Plan.model_validate(doc).model_dump(mode="json", exclude_none=True)
+            event = PlanEvent(planId=doc["planId"], revision=self.revision, section=section, state=state, error=error, plan=snapshot)
+            await self.publish(doc["planId"], event.model_dump(mode="json", exclude_none=True))

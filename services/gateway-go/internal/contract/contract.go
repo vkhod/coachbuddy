@@ -610,6 +610,64 @@ func (j *PlanEvent) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// One entry of GET /api/v1/plans/{id}/revisions: what one revision of a plan
+// changed. The plan as it was at that revision is GET
+// /api/v1/plans/{id}/revisions/{n}.
+type PlanRevision struct {
+	// Change corresponds to the JSON schema field "change".
+	Change RevisionChange `json:"change"`
+
+	// CreatedAt corresponds to the JSON schema field "createdAt".
+	CreatedAt time.Time `json:"createdAt"`
+
+	// Revision corresponds to the JSON schema field "revision".
+	Revision int `json:"revision"`
+
+	// The sections this revision built: all five for a new plan, the changed section
+	// (and the timeline when a warm-up change moved its minutes) for a regeneration,
+	// none for a restore.
+	Sections []RevisionSection `json:"sections"`
+
+	// State corresponds to the JSON schema field "state".
+	State RevisionState `json:"state"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *PlanRevision) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["change"]; raw != nil && !ok {
+		return fmt.Errorf("field change in PlanRevision: required")
+	}
+	if _, ok := raw["createdAt"]; raw != nil && !ok {
+		return fmt.Errorf("field createdAt in PlanRevision: required")
+	}
+	if _, ok := raw["revision"]; raw != nil && !ok {
+		return fmt.Errorf("field revision in PlanRevision: required")
+	}
+	if _, ok := raw["sections"]; raw != nil && !ok {
+		return fmt.Errorf("field sections in PlanRevision: required")
+	}
+	if _, ok := raw["state"]; raw != nil && !ok {
+		return fmt.Errorf("field state in PlanRevision: required")
+	}
+	type Plain PlanRevision
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if 1 > plain.Revision {
+		return fmt.Errorf("field %s: must be >= %v", "revision", 1)
+	}
+	if len(plain.Sections) > 5 {
+		return fmt.Errorf("field %s length: must be <= %d", "sections", 5)
+	}
+	*j = PlanRevision(plain)
+	return nil
+}
+
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *Plan) UnmarshalJSON(value []byte) error {
 	var raw map[string]interface{}
@@ -692,6 +750,150 @@ func (j *RegenerateSectionRequest) UnmarshalJSON(value []byte) error {
 		return fmt.Errorf("field %s length: must be <= %d", "instruction", 500)
 	}
 	*j = RegenerateSectionRequest(plain)
+	return nil
+}
+
+// create: the plan was built. regenerate: one section was built again with the
+// instruction. restore: the plan of revision restoredFrom was copied into this
+// revision.
+type RevisionChange struct {
+	// Instruction corresponds to the JSON schema field "instruction".
+	Instruction *string `json:"instruction,omitempty,omitzero"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind RevisionKind `json:"kind"`
+
+	// RestoredFrom corresponds to the JSON schema field "restoredFrom".
+	RestoredFrom *int `json:"restoredFrom,omitempty,omitzero"`
+
+	// Section corresponds to the JSON schema field "section".
+	Section *RevisionSection `json:"section,omitempty,omitzero"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *RevisionChange) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["kind"]; raw != nil && !ok {
+		return fmt.Errorf("field kind in RevisionChange: required")
+	}
+	type Plain RevisionChange
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if plain.Instruction != nil && utf8.RuneCountInString(string(*plain.Instruction)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "instruction", 1)
+	}
+	if plain.Instruction != nil && utf8.RuneCountInString(string(*plain.Instruction)) > 500 {
+		return fmt.Errorf("field %s length: must be <= %d", "instruction", 500)
+	}
+	if plain.RestoredFrom != nil && 1 > *plain.RestoredFrom {
+		return fmt.Errorf("field %s: must be >= %v", "restoredFrom", 1)
+	}
+	*j = RevisionChange(plain)
+	return nil
+}
+
+type RevisionKind string
+
+const RevisionKindCreate RevisionKind = "create"
+const RevisionKindRegenerate RevisionKind = "regenerate"
+const RevisionKindRestore RevisionKind = "restore"
+
+var enumValues_RevisionKind = []interface{}{
+	"create",
+	"regenerate",
+	"restore",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *RevisionKind) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_RevisionKind {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_RevisionKind, v)
+	}
+	*j = RevisionKind(v)
+	return nil
+}
+
+type RevisionSection string
+
+const RevisionSectionInjuries RevisionSection = "injuries"
+const RevisionSectionParts RevisionSection = "parts"
+const RevisionSectionTimeline RevisionSection = "timeline"
+const RevisionSectionWarmup RevisionSection = "warmup"
+const RevisionSectionWod RevisionSection = "wod"
+
+var enumValues_RevisionSection = []interface{}{
+	"wod",
+	"warmup",
+	"parts",
+	"injuries",
+	"timeline",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *RevisionSection) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_RevisionSection {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_RevisionSection, v)
+	}
+	*j = RevisionSection(v)
+	return nil
+}
+
+type RevisionState string
+
+const RevisionStateDone RevisionState = "done"
+const RevisionStateFailed RevisionState = "failed"
+const RevisionStateRunning RevisionState = "running"
+
+var enumValues_RevisionState = []interface{}{
+	"running",
+	"done",
+	"failed",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *RevisionState) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_RevisionState {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_RevisionState, v)
+	}
+	*j = RevisionState(v)
 	return nil
 }
 

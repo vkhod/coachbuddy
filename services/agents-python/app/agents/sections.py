@@ -22,7 +22,7 @@ from google.adk.events import Event, EventActions
 from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError
 
 from app.agents import prompts
-from app.agents.outputs import InjuriesOut, ParserOut, ScalingOut, TimelineDraft, WarmupOut
+from app.agents.outputs import InjuriesOut, InjuriesRefineOut, InjuryWarmupLinesOut, ParserOut, ScalingOut, TimelineDraft, WarmupOut
 from app.agents.schema_for_model import schema_for_model
 from app.contract.plan import (
     ClassInput,
@@ -57,6 +57,11 @@ class SectionFailed(Exception):
 
 class SectionSkipped(Exception):
     """The section has nothing to do for this plan (for example no injuries in the comment)."""
+
+
+class SectionKept(Exception):
+    """Refinement only: the section does not need to change, so the stored one stays as it
+    is, with its state (for example the timeline when the warm-up kept its minutes)."""
 
 
 def as_json(value: Any) -> str:
@@ -169,7 +174,6 @@ class SectionAgent(BaseAgent):
         run = AgentRun(agent=self.inner.name, section=self.section, provider=self.route.provider, model=self.route.model)
         self._run = run
         started = time.perf_counter()
-        await self._emit("running")
         state = ctx.session.state
 
         def finish(state_name: str, error: Optional[str] = None) -> Event:
@@ -184,15 +188,22 @@ class SectionAgent(BaseAgent):
 
         try:
             extra = await self.prepare(state)
+        except SectionKept:
+            self._run = None
+            yield self._state_event({f"kept:{self.section}": True})
+            return
         except SectionSkipped:
+            await self._emit("running")
             yield finish("skipped")
             await self._emit("skipped")
             return
         except (SectionFailed, ToolError) as exc:
+            await self._emit("running")
             reason = _short(str(exc))
             yield finish("failed", reason)
             await self._emit("failed", reason)
             return
+        await self._emit("running")
         if extra:
             yield self._state_event(extra)
 
@@ -235,10 +246,48 @@ class SectionAgent(BaseAgent):
         await self._emit("failed", reason)
 
 
-def _instruction(base: str, inputs: Callable[[Dict[str, Any]], str], repair_key: str) -> Callable[[ReadonlyContext], str]:
+SECTION_NAMES = {"warmup": "warm-up", "parts": "scaling", "injuries": "injury advice", "timeline": "timeline"}
+
+
+def _refine_inputs(section: str, state: Dict[str, Any]) -> str:
+    """The change the coach asked for, with the section as it stands (refinement only)."""
+    refine = state.get("refine") or {}
+    if section == "injuries" and refine.get("section") == "warmup":
+        return "\n".join(
+            [
+                "The coach changed the warm-up of an existing plan; the warm-up above is the new one.",
+                f"Current injury advice: {as_json(state.get('injuries') or [])}",
+                "Write a new warm-up line for each injury, for the new warm-up: same labels, same order, "
+                "one entry per injury. Only the warm-up lines change; the advice for the WOD parts stays as it is.",
+            ]
+        )
+    if refine.get("section") != section:
+        return ""
+    name = SECTION_NAMES[section]
+    current = refine.get("current")
+    lines = [
+        f"The coach asks to change the {name} of an existing plan.",
+        f"Current {name}: {as_json(current)}" if current is not None else f"There is no {name} yet; build it.",
+        f"Coach's comment when the plan was built: {refine.get('comment') or 'none'}",
+        f"The coach's change: {refine['instruction']}",
+        "Make the change the coach asks for and keep the rest as it is. Every other rule above still applies.",
+    ]
+    if refine.get("previousError"):
+        lines.insert(1, f"The previous attempt at the {name} failed: {refine['previousError']}. Avoid the same problem.")
+    if section == "injuries":
+        lines.append(
+            "Keep one entry per injury in the current list, same label and order, unless the change adds or "
+            "removes one. A new injury goes last. returnNote only for an athlete coming back after a break."
+        )
+    return "\n".join(lines)
+
+
+def _instruction(base: str, inputs: Callable[[Dict[str, Any]], str], section: str) -> Callable[[ReadonlyContext], str]:
+    repair_key = f"repair:{section}"
+
     def build(ctx: ReadonlyContext) -> str:
         state = ctx.state
-        parts = [base, inputs(state)]
+        parts = [base, inputs(state), _refine_inputs(section, state)]
         repair = state.get(repair_key) or []
         if repair:
             parts.append(
@@ -254,7 +303,7 @@ def _llm_agent(name: str, section: str, route: Route, factory: ModelFactory, bas
     return LlmAgent(
         name=name,
         model=factory(route),
-        instruction=_instruction(base, inputs, f"repair:{section}"),
+        instruction=_instruction(base, inputs, section),
         # Structure for the model; the full contract model checks the answer in check().
         output_schema=schema_for_model(schema),
         output_key=f"draft:{section}",
@@ -359,14 +408,28 @@ def _scaling_inputs(state: Dict[str, Any]) -> str:
 # --- Injuries -------------------------------------------------------------------------
 
 
+def _refining(state: Dict[str, Any], section: str) -> bool:
+    return (state.get("refine") or {}).get("section") == section
+
+
 class InjurySection(SectionAgent):
     async def prepare(self, state):
         _need_wod(state)
-        if not state.get("injuryMentions"):
+        if _refining(state, "warmup"):
+            # After a warm-up change only the injury warm-up lines are written again, and
+            # only when there are injuries and a new warm-up to fit them to.
+            if not state.get("injuries") or not state.get("warmup"):
+                raise SectionKept()
+            return {}
+        if not state.get("injuryMentions") and not _refining(state, "injuries"):
             raise SectionSkipped()
         return {}
 
     async def check(self, state, draft):
+        if _refining(state, "injuries"):
+            return self._check_refined(state, draft)
+        if _refining(state, "warmup"):
+            return self._check_warmup_lines(state, draft)
         out = InjuriesOut.model_validate(draft)
         mentions = state["injuryMentions"]
         problems: List[str] = []
@@ -394,6 +457,41 @@ class InjurySection(SectionAgent):
         problems += check_plan_rules(_rules_plan(Wod.model_validate(state["wod"]), injuries=injuries))
         return [i.model_dump(mode="json", exclude_none=True) for i in injuries], problems
 
+    def _check_refined(self, state, draft):
+        """The coach may add or drop injuries. An injury that stays keeps the words of the
+        comment it came from; a new one is credited to the coach's change."""
+        out = InjuriesRefineOut.model_validate(draft)
+        labels = [a.label.strip().lower() for a in out.injuries]
+        problems = [f"injuries: {a.label} is listed twice" for a in out.injuries if labels.count(a.label.strip().lower()) > 1][:1]
+        known = {m["label"].strip().lower(): m for m in state.get("injuryMentions") or []}
+        instruction = state["refine"]["instruction"][:200]
+        injuries = []
+        for a in out.injuries:
+            mention = known.get(a.label.strip().lower())
+            injuries.append(
+                Injury(
+                    label=a.label,
+                    fromComment=mention["fromComment"] if mention else instruction,
+                    returnNote=a.returnNote,
+                    warmup=a.warmup,
+                    parts=a.parts,
+                    caution=INJURY_CAUTION,
+                )
+            )
+        problems += check_plan_rules(_rules_plan(Wod.model_validate(state["wod"]), injuries=injuries))
+        return [i.model_dump(mode="json", exclude_none=True) for i in injuries], problems
+
+    def _check_warmup_lines(self, state, draft):
+        """New warm-up lines on the stored injuries; nothing else in them changes."""
+        out = InjuryWarmupLinesOut.model_validate(draft)
+        stored = state["injuries"]
+        got, want = [a.label for a in out.injuries], [i["label"] for i in stored]
+        if got != want:
+            return None, [f"injuries: expected one entry per injury in this order {want}, got {got}"]
+        injuries = [Injury.model_validate({**i, "warmup": a.warmup}) for i, a in zip(stored, out.injuries)]
+        problems = check_plan_rules(_rules_plan(Wod.model_validate(state["wod"]), injuries=injuries))
+        return [i.model_dump(mode="json", exclude_none=True) for i in injuries], problems
+
     def output(self, value):
         return {"injuries": value}
 
@@ -404,7 +502,7 @@ def _injury_inputs(state: Dict[str, Any]) -> str:
         [
             f"WOD: {as_json(state['wod'])}",
             f"Warm-up: {as_json(warmup)}" if warmup else "Warm-up: not planned yet; advise for a general warm-up.",
-            f"Injuries: {as_json(state['injuryMentions'])}",
+            f"Injuries: {as_json(state.get('injuryMentions') or [])}",
         ]
     )
 
@@ -415,6 +513,16 @@ def _injury_inputs(state: Dict[str, Any]) -> str:
 class TimelineSection(SectionAgent):
     async def prepare(self, state):
         _need_wod(state)
+        refine = state.get("refine") or {}
+        if refine.get("section") == "warmup":
+            # After a warm-up change the timeline is rebuilt only when it would differ: the
+            # new warm-up has other minutes, or the old timeline was provisional or missing.
+            # A failed new warm-up keeps the old timeline; the pipeline marks it provisional.
+            warmup, before = state.get("warmup"), refine.get("timelineBefore")
+            if not warmup:
+                raise SectionKept()
+            if before and not before.get("provisional") and refine.get("warmupMinutesBefore") == warmup["minutes"]:
+                raise SectionKept()
         return {"warmupProvisional": not state.get("warmup")}
 
     async def check(self, state, draft):
@@ -425,6 +533,13 @@ class TimelineSection(SectionAgent):
             for i, b in enumerate(out.blocks)
             if b.section and b.section not in ("warmup", "brief", "transition") and b.section not in wod_ids
         ]
+        # The timeline must give the warm-up the minutes it has (or the reserve while it is
+        # missing). Checked here because a warm-up change rebuilds the timeline for exactly this.
+        warmup = state.get("warmup")
+        want = warmup["minutes"] if warmup else PROVISIONAL_WARMUP_MINUTES
+        got = sum(b.endMin - b.startMin for b in out.blocks if b.section == "warmup")
+        if got != want:
+            problems.append(f"blocks: the warm-up blocks (section \"warmup\") take {got} minutes, the warm-up is {want} minutes")
         self.used_tool("verify_timeline_math")
         verified = await self.tools.call(
             "verify_timeline_math",
@@ -476,8 +591,16 @@ SECTIONS = {
 }
 
 
-def build_section(section: str, route: Route, factory: ModelFactory, tools: Tools, notify: Optional[Notify]) -> SectionAgent:
+def build_section(
+    section: str, route: Route, factory: ModelFactory, tools: Tools, notify: Optional[Notify], refine: Optional[str] = None
+) -> SectionAgent:
+    """refine: the section the coach is changing, in a refinement. Injuries then answer with
+    their labels (injuries changed) or with new warm-up lines only (warm-up changed)."""
     name, cls, base, inputs, schema, sees_input, _role = SECTIONS[section]
+    if section == "injuries" and refine == "injuries":
+        schema = InjuriesRefineOut
+    elif section == "injuries" and refine == "warmup":
+        schema = InjuryWarmupLinesOut
     inner = _llm_agent(name, section, route, factory, base, inputs, schema, sees_input)
     return cls(name=f"{name}Section", section=section, inner=inner, route=route, tools=tools, notify=notify)
 
@@ -487,4 +610,4 @@ def role_for(section: str) -> str:
 
 
 # Re-exported for tests.
-__all__ = ["SectionAgent", "SectionFailed", "SectionSkipped", "AgentRun", "build_section", "role_for", "Warmup"]
+__all__ = ["SectionAgent", "SectionFailed", "SectionKept", "SectionSkipped", "AgentRun", "build_section", "role_for", "Warmup"]
