@@ -352,3 +352,45 @@ func TestDeletePlan_RemovesItsRevisions(t *testing.T) {
 		t.Errorf("delete: %d, revisions left %d", rr.Code, len(ds.revisions[id]))
 	}
 }
+
+// A warm-up change that fails before agents-python answers leaves the plan
+// without a warm-up, so the old timeline must be marked provisional, the same
+// as when agents-python itself reports the failure.
+func TestRegenerate_FailedWarmupMarksTheKeptTimelineProvisional(t *testing.T) {
+	api, ds := newTestAPIHandler(t)
+	srv := agentsByPath(t, func(w http.ResponseWriter, req map[string]interface{}) {})
+	api.AgentsServiceURL = srv.URL
+	id := builtPlan(t, api)
+	srv.Close() // agents-python goes down before the change
+
+	before, _ := ds.GetPlan(t.Context(), id)
+	if tl, _ := before["timeline"].(map[string]interface{}); tl == nil || tl["provisional"] == true {
+		t.Fatalf("version 1 needs a final timeline: %v", before["timeline"])
+	}
+	if rr := regenerate(api, "coach-alpha", id, "warmup", `{"instruction":"Shorter"}`); rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rr.Code)
+	}
+	api.jobs.Wait()
+
+	doc, _ := ds.GetPlan(t.Context(), id)
+	st := states(doc)
+	if st["warmup"] != "failed" || st["timeline"] != "done" {
+		t.Fatalf("states: %v", st)
+	}
+	tl, _ := doc["timeline"].(map[string]interface{})
+	if tl == nil || tl["provisional"] != true {
+		t.Errorf("the kept timeline must be provisional while the warm-up is missing: %v", doc["timeline"])
+	}
+	if err := validPlan(doc); err != nil {
+		t.Errorf("failed plan must still match the contract: %v", err)
+	}
+
+	// Restoring version 1 brings back its warm-up and its final timeline.
+	if rr := restore(api, "coach-alpha", id, "1"); rr.Code != http.StatusOK {
+		t.Fatalf("restore: %d %s", rr.Code, rr.Body.String())
+	}
+	doc, _ = ds.GetPlan(t.Context(), id)
+	if tl, _ := doc["timeline"].(map[string]interface{}); tl == nil || tl["provisional"] == true {
+		t.Errorf("version 1's timeline is final: %v", doc["timeline"])
+	}
+}
