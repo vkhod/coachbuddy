@@ -3,10 +3,10 @@
 # google-adk, litellm and mcp move together: check the ADK release notes first
 # (see claude/coach-buddy-adk-capability-report.md in the project for why litellm is above
 # the range ADK's own extras declare).
-fastapi>=0.115.0
+fastapi>=0.165.0
 uvicorn[standard]>=0.32.0
-pydantic>=2.9.0
+pydantic>=2.14.4
 redis>=5.2.0
-google-adk==2.14.1
-litellm==1.109.1
+google-adk==2.15.0
+litellm==1.110.2
 mcp==2.3.0
