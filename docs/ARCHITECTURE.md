@@ -1,7 +1,7 @@
 # CoachBuddy — Solutions Architecture & System Design Blueprint
 
 > [!NOTE]
-> **Architectural Intent:** CoachBuddy is designed both as a practical gym-floor companion for CrossFit/functional fitness coaches and as a **reference polyglot microservices & multi-agent system** demonstrating production-grade patterns for Senior Developer / Solutions Architect interviews.
+> **Architectural Intent:** CoachBuddy is designed both as a practical WOD plan builder for CrossFit/functional fitness coaches and as a **reference polyglot microservices & multi-agent system** demonstrating production-grade patterns for Senior Developer / Solutions Architect interviews.
 
 ---
 
@@ -11,7 +11,7 @@ In a system design interview, every technology choice must have a clear **"Why"*
 
 | Component | Technology | Why This Technology? (The Architect's Pitch) |
 | :--- | :--- | :--- |
-| **Client & Public Share UI** | **TypeScript + Next.js (App Router, PWA)** | Provides installable mobile PWA capabilities (`WakeLock` API for live gym floor timers, offline caching of saved WOD plans) alongside fast Server-Side Rendering (SSR) for shared public WOD links (`/s/[shortId]`) scanned via QR codes. |
+| **Client & Public Share UI** | **TypeScript + Next.js (App Router, PWA)** | Provides installable mobile PWA capabilities (offline caching of saved WOD plans) alongside fast Server-Side Rendering (SSR) for shared public WOD links (`/s/[shortId]`) scanned via QR codes. |
 | **API Gateway, Auth & Key Vault** | **Go (Chi)** | Low memory footprint, native concurrency (goroutines) for managing long-lived Server-Sent Events (SSE) streams to the client, strict typing for auth middleware, and rock-solid `crypto/cipher` primitives for **AES-256-GCM envelope encryption** of user LLM API keys. |
 | **Multi-Agent Orchestrator** | **Python 3.12 + FastAPI + Google ADK + LiteLLM** | Python is the first-class ecosystem for **Google Agent Development Kit (ADK)**. Combining ADK's `SequentialAgent` and `ParallelAgent` primitives with **LiteLLM** enables provider-agnostic, per-agent routing (Gemini, OpenAI, Anthropic, Groq) using dynamic runtime keys. |
 | **Domain Tooling & Compute** | **Rust (Axum + MCP JSON-RPC/SSE)** | Implements a high-performance **Model Context Protocol (MCP)** server over HTTP/SSE. Rust handles CPU-bound/deterministic tasks: exercise biomechanics graph traversal, strict timeline block math validation, and zero-allocation SVG QR code generation. |
@@ -26,7 +26,7 @@ In a system design interview, every technology choice must have a clear **"Why"*
 ```mermaid
 flowchart TB
     subgraph ClientLayer["Client Layer (Edge / Browser)"]
-        PWA["Next.js PWA<br/>(Coach Planner & Floor Mode)"]
+        PWA["Next.js PWA<br/>(Coach Plan Builder)"]
         ShareView["Public Share View<br/>(SSR via QR / Short URL)"]
     end
 
