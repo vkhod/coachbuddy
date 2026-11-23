@@ -5,6 +5,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
+import { useBrand } from "@/components/Brand";
 import { KeyForm } from "@/components/KeyForm";
 import { BackHeader, ClassLength, ErrorNote, Screen } from "@/components/ui";
 import { ApiError, deleteKey, listKeys, listModels, updateProfile } from "@/lib/api";
@@ -25,6 +26,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export default function SettingsPage() {
   const router = useRouter();
+  const brand = useBrand();
   const { coach, setCoach, error: coachError } = useCoach();
   const [name, setName] = useState("");
   const [box, setBox] = useState("");
@@ -84,7 +86,7 @@ export default function SettingsPage() {
 
   return (
     <Screen>
-      <BackHeader href="/" label="Back" title="Coach Buddy" />
+      <BackHeader href="/" label="Back" title={brand.name} />
       <main className="flex flex-1 flex-col px-4 py-[22px]">
         <h1 className="head m-0 text-[40px] leading-[0.95]">Settings</h1>
         {coachError && <ErrorNote message={coachError} onRetry={() => window.location.reload()} />}

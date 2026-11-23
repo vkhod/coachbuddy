@@ -19,8 +19,9 @@ This directory contains `pwa-nextjs` (`:3000`), the TypeScript + Next.js 16 (App
 - `src/lib/plan.ts`: read-only helpers over the contract `Plan` (labels, tier order, today and injury rows).
 - `src/lib/contract/`: TypeScript types generated from `schema/` by `scripts/gen-schema` (do not edit). Plan payloads use only these.
 - `src/lib/gateway-types.ts`: shapes of gateway-only responses (auth, keys, models, share links), which are not in the plan contract.
-- `src/app/globals.css` and `tailwind.config.ts`: the programme sheet look. Colours are CSS variables (`--paper`, `--ink`, `--sub`, `--rule`, `--accent`) for branding from configuration.
-- `public/manifest.json` and `public/icon.svg`: PWA manifest and icon.
+- `src/app/globals.css` and `tailwind.config.ts`: the programme sheet look. Colours are CSS variables (`--paper`, `--ink`, `--sub`, `--rule`, `--accent`, `--card`); the defaults in `globals.css` match `DEFAULT_BRANDING`, and the layout overrides them from the branding file. Use the Tailwind names (`bg-paper`, `text-ink`), never literal colours.
+- Branding (Phase 3 step 5): `src/lib/branding.ts` reads `BRANDING_FILE` once on the server (name, colours, logo, icon; see `config/branding/README.md`), checks it, and `src/instrumentation.ts` stops the server when it is invalid. The root layout writes the colours as CSS variables and passes name and logo to client components through `BrandProvider` (`src/components/Brand.tsx`; `BrandMark` is the header logo or name). `/brand/logo`, `/brand/icon` and `/manifest.webmanifest` are route handlers built from it. Never hard-code the box name in a page; use `useBrand()`.
+- `public/icon.svg`: the built-in icon, used when the branding has none.
 
 ---
 

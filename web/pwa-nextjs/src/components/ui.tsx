@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { BrandMark } from "./Brand";
 
 // --- Icons (square line caps, as in the mockups) ---
 
@@ -55,8 +56,8 @@ export const CameraIcon = () => (
 export function AppHeader({ history = true, settings = true }: { history?: boolean; settings?: boolean }) {
   return (
     <header className="rule-B flex h-14 items-center pl-4 pr-1">
-      <Link href="/" className="head flex-1 text-[22px] tracking-wide no-underline">
-        Coach Buddy
+      <Link href="/" className="flex flex-1 items-center no-underline">
+        <BrandMark />
       </Link>
       {history && (
         <Link href="/history" aria-label="History" className="tap flex items-center justify-center">
