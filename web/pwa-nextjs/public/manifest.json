@@ -1,11 +1,11 @@
 {
-  "name": "CoachBuddy — Tactical Box Session Planner",
-  "short_name": "CoachBuddy",
-  "description": "AI-powered WOD Session Planner, 4-Tier Scaling Matrix, BYOK Vault and QR Sharing for CrossFit & Functional Fitness Coaches.",
+  "name": "Coach Buddy",
+  "short_name": "Coach Buddy",
+  "description": "WOD plans for CrossFit coaches: warm-up, scaling tiers, injuries and a class timeline from a screenshot.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0B0F17",
-  "theme_color": "#CCFF00",
+  "background_color": "#f6f4ee",
+  "theme_color": "#f6f4ee",
   "orientation": "any",
   "icons": [
     {

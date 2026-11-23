@@ -1,39 +1,30 @@
 import type { Metadata, Viewport } from "next";
+import "@fontsource/barlow/400.css";
+import "@fontsource/barlow/500.css";
+import "@fontsource/barlow/600.css";
+import "@fontsource/barlow-condensed/500.css";
+import "@fontsource/barlow-condensed/600.css";
+import "@fontsource/barlow-condensed/700.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CoachBuddy — Tactical Box WOD Planner",
-  description:
-    "Multi-Agent WOD Session Planner, Broomstick Warm-Up Game Generator, 4-Tier Scaling Matrix, BYOK Vault and QR Sharing for CrossFit Coaches.",
+  title: "Coach Buddy",
+  description: "WOD plans for CrossFit coaches: warm-up, scaling tiers, injuries and a class timeline from a screenshot.",
   manifest: "/manifest.json",
-  icons: {
-    icon: "/icon.svg",
-    apple: "/icon.svg",
-  },
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "CoachBuddy",
-  },
+  icons: { icon: "/icon.svg", apple: "/icon.svg" },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "Coach Buddy" },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0B0F17",
+  themeColor: "#f6f4ee",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 5,
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen bg-[#0B0F17] text-slate-100 selection:bg-[#CCFF00] selection:text-[#0B0F17]">
-        {children}
-      </body>
+    <html lang="en">
+      <body className="min-h-dvh bg-paper font-sans text-ink">{children}</body>
     </html>
   );
 }
