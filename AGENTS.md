@@ -1,6 +1,6 @@
 # CoachBuddy — Workspace Agent Rules (`AGENTS.md`)
 
-**CoachBuddy** is a polyglot microservices & multi-agent CrossFit coaching platform (WOD preparation, 2-phase non-repetitive warm-ups, 4-tier movement scaling, minute-by-minute class timelines, live gym-floor timer, and QR code session sharing).
+**CoachBuddy** is a polyglot microservices & multi-agent CrossFit coaching platform (WOD preparation, 2-phase non-repetitive warm-ups, 4-tier movement scaling, minute-by-minute class timelines, and QR code session sharing). It builds a plan to read; there is no live class timer or Floor Mode.
 
 For deeper architectural rationale and system diagrams, consult [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
