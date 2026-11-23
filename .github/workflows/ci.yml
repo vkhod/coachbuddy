@@ -53,7 +53,7 @@ jobs:
         working-directory: services/gateway-go
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: services/gateway-go/go.mod
           cache-dependency-path: services/gateway-go/go.sum
@@ -139,7 +139,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: schema/requirements-gen.txt
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: services/gateway-go/go.mod
           cache-dependency-path: services/gateway-go/go.sum
