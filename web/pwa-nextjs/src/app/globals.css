@@ -3,35 +3,55 @@
 @tailwind utilities;
 
 :root {
-  --bg-obsidian: #0B0F17;
-  --accent-volt: #CCFF00;
-  --accent-emerald: #10B981;
-  --accent-blaze: #F97316;
+  --paper: #f6f4ee;
+  --ink: #121212;
+  --sub: #4a4a48;
+  --rule: #cbc6ba;
+  /* The only accent: rows for athletes who need attention today. */
+  --accent: #b33a0b;
+  --card: #ffffff;
 }
 
 html,
 body {
-  background-color: #0B0F17;
-  color: #F8FAFC;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  background: var(--paper);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
 }
 
-/* Custom Tactical Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+html {
+  scroll-behavior: smooth;
 }
 
-::-webkit-scrollbar-track {
-  background: #0B0F17;
+@layer components {
+  /* Condensed uppercase headings, times and tier names. */
+  .head {
+    @apply font-cond font-bold uppercase;
+  }
+  .lnk {
+    @apply font-semibold underline underline-offset-4;
+  }
+  .rule-b {
+    border-bottom: 1px solid var(--rule);
+  }
+  .rule-B {
+    border-bottom: 2px solid var(--ink);
+  }
+  .tap {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .btn-primary {
+    @apply head flex h-14 w-full items-center justify-center rounded-sm bg-ink text-[22px] tracking-wide text-paper disabled:opacity-40;
+  }
+  .field {
+    @apply w-full rounded-sm border border-ink bg-card px-3 py-2.5 text-base text-ink;
+  }
 }
 
-::-webkit-scrollbar-thumb {
-  background: #1E293B;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+/* Leaves room for the fixed plan header when jumping to a section. */
+section[id] {
+  scroll-margin-top: 108px;
 }
