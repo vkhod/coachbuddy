@@ -28,14 +28,19 @@ updates:
     groups:
       npm: { patterns: ["*"] }
     ignore:
-      # The Next.js and React major upgrade is planned work at the start of Phase 3.
+      # Next.js and React majors are planned work, done by hand (Next 16 and
+      # React 19 in Phase 3). The React types move with React.
       - dependency-name: next
         update-types: ["version-update:semver-major"]
       - dependency-name: react
         update-types: ["version-update:semver-major"]
       - dependency-name: react-dom
         update-types: ["version-update:semver-major"]
-      # Tooling majors change the build (TypeScript 7 has no JS API for Next 14,
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
+      # Tooling majors change the build (TypeScript 7 had no JS API for Next 14,
       # Tailwind 4 moves its PostCSS plugin), so they are planned work too.
       - dependency-name: typescript
         update-types: ["version-update:semver-major"]

@@ -1,6 +1,6 @@
 # CoachBuddy Next.js PWA — Agent Rules (`web/pwa-nextjs`)
 
-This directory contains `pwa-nextjs` (`:3000`), the TypeScript + Next.js 14 (App Router) + Tailwind CSS Progressive Web App for CrossFit and functional fitness coaches.
+This directory contains `pwa-nextjs` (`:3000`), the TypeScript + Next.js 16 (App Router), React 19 + Tailwind CSS Progressive Web App for CrossFit and functional fitness coaches.
 
 ---
 
