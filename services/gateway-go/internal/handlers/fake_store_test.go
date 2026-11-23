@@ -272,6 +272,22 @@ func (f *fakeStore) SaveAgentRuns(_ context.Context, runs *models.AgentRuns) err
 	return nil
 }
 
+// ListAgentRuns returns the coach's stored runs (one per plan in the fake), at most limit.
+func (f *fakeStore) ListAgentRuns(_ context.Context, coachID string, limit int) ([]*models.AgentRunsRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	out := []*models.AgentRunsRecord{}
+	for _, r := range f.runs {
+		if r.CoachID == coachID && len(out) < limit {
+			out = append(out, &models.AgentRunsRecord{PlanID: r.PlanID, Revision: r.Revision, Runs: r.Runs, OrchestrationLatencyMs: r.OrchestrationLatencyMs})
+		}
+	}
+	return out, nil
+}
+
 // PublishPlanEvent stores the event and sends it to open subscriptions, like Redis.
 func (f *fakeStore) PublishPlanEvent(_ context.Context, id string, event []byte) error {
 	f.mu.Lock()
