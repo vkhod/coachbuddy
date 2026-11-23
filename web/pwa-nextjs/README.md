@@ -1,6 +1,6 @@
 # CoachBuddy Next.js TypeScript PWA (`web/pwa-nextjs`)
 
-High-contrast **Tactical Athletic Box** Next.js 14 App Router PWA for CrossFit & functional fitness coaches.
+High-contrast **Tactical Athletic Box** Next.js 16 App Router PWA for CrossFit & functional fitness coaches.
 
 ## Key Features
 - **Tab 1: WOD Session Planner & Multi-Agent Stepper**:
