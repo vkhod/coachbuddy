@@ -15,6 +15,13 @@ updates:
     schedule: { interval: weekly, day: monday }
     groups:
       python: { patterns: ["*"] }
+    ignore:
+      # google-adk, litellm and mcp move together, by hand, after reading
+      # ADK's release notes (root AGENTS.md section 4). Grouped bumps of them
+      # also broke the hashed lock (#28, #31: fastuuid left unpinned).
+      - dependency-name: google-adk
+      - dependency-name: litellm
+      - dependency-name: mcp
 
   - package-ecosystem: cargo
     directory: /services/mcp-rust
