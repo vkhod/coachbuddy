@@ -8,12 +8,13 @@ This directory contains `pwa-nextjs` (`:3000`), the TypeScript + Next.js 16 (App
 
 - Routes (`src/app/`), each a client page:
   - `/` Capture: screenshot, comment, class length, Build plan.
-  - `/plans/[id]` the plan in class order; progress while sections are built (SSE, `src/lib/usePlan.ts`).
+  - `/plans/[id]` the plan in class order; progress while sections are built (SSE, `src/lib/usePlan.ts`). Change, Retry and Add an injury open `ChangeSheet`.
+  - `/plans/[id]/versions` what each revision changed, with restore; `/plans/[id]/versions/[n]` an earlier version, read only.
   - `/history` plans by date, with search.
   - `/settings` profile, AI key, sign out.
   - `/s/[code]` public share page; shows only what the gateway's share view returns.
   - `/login`, `/welcome` sign in or create an account; add the first AI key.
-- `src/components/`: `PlanView.tsx` (timeline, warm-up, parts, athletes today, failed sections), `ShareSheet.tsx`, `KeyForm.tsx`, `ui.tsx` (headers, icons, class length, error note).
+- `src/components/`: `PlanView.tsx` (timeline, warm-up, parts, athletes today, failed sections), `ChangeSheet.tsx` (the fixed chips add text to the instruction; only the instruction is sent), `ShareSheet.tsx`, `KeyForm.tsx`, `ui.tsx` (headers, icons, class length, error note).
 - `src/lib/api.ts`: the gateway client. It throws `ApiError` with the gateway's reason; it never builds anything locally.
 - `src/lib/plan.ts`: read-only helpers over the contract `Plan` (labels, tier order, today and injury rows).
 - `src/lib/contract/`: TypeScript types generated from `schema/` by `scripts/gen-schema` (do not edit). Plan payloads use only these.

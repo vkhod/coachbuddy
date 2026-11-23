@@ -128,3 +128,19 @@ export const createShare = (planId: string, includeCoachNotes: boolean) =>
 
 export const resolveShare = (code: string) =>
   request<{ share: ShareLink; plan: Partial<Plan> }>(`/api/v1/share/${encodeURIComponent(code)}`, { auth: false });
+
+// --- Refinement and versions ---
+
+export type RefinableSection = "warmup" | "parts" | "injuries" | "timeline";
+
+export const regenerateSection = (planId: string, section: RefinableSection, instruction: string) =>
+  request<CreatePlanResponse>(`/api/v1/plans/${planId}/sections/${section}/regenerate`, {
+    method: "POST",
+    body: { instruction },
+  });
+
+export const getRevision = (planId: string, n: number) =>
+  request<{ revision: number; plan: Plan }>(`/api/v1/plans/${planId}/revisions/${n}`);
+
+export const restoreRevision = (planId: string, n: number) =>
+  request<{ plan: Plan }>(`/api/v1/plans/${planId}/revisions/${n}/restore`, { method: "POST", body: {} }).then((r) => r.plan);

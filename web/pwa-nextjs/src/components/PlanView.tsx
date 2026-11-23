@@ -23,6 +23,23 @@ import {
 
 type Audience = "coach" | "coach-share" | "athlete";
 
+export type Refinable = "warmup" | "parts" | "injuries" | "timeline";
+
+/** What the coach can do on a section. Only the coach's own plan page passes these. */
+export interface PlanActions {
+  change: (section: Refinable) => void;
+  retry: (section: Refinable) => void;
+  addInjury: () => void;
+}
+
+function ChangeLink({ onClick, label = "Change" }: { onClick: () => void; label?: string }) {
+  return (
+    <button type="button" onClick={onClick} className="lnk tap shrink-0 bg-transparent p-0 text-[15px] text-ink">
+      {label}
+    </button>
+  );
+}
+
 const STATUS_WORD: Record<string, string> = {
   OPTIMAL: "fits exactly",
   TIGHT: "tight fit",
@@ -44,12 +61,15 @@ function partKicker(part: WodPart): string {
   return `${named ? part.name : `${part.name} · ${part.id}`} · ${part.minutes} min`;
 }
 
-function SectionHead({ at, kicker, title, id }: { at?: number; kicker: string; title: string; id: string }) {
+function SectionHead({ at, kicker, title, id, action }: { at?: number; kicker: string; title: string; id: string; action?: React.ReactNode }) {
   return (
     <div className="rule-B grid grid-cols-[48px_minmax(0,1fr)] items-end gap-1 pb-2">
       <span className="head text-[26px] leading-none">{at !== undefined ? `${two(at)}′` : ""}</span>
       <div>
-        <Kicker>{kicker}</Kicker>
+        <div className="flex items-baseline justify-between gap-2">
+          <Kicker>{kicker}</Kicker>
+          {action}
+        </div>
         <h2 id={id} className={titleClass(title)}>{title}</h2>
       </div>
     </div>
@@ -57,12 +77,13 @@ function SectionHead({ at, kicker, title, id }: { at?: number; kicker: string; t
 }
 
 /** A section that could not be built: the reason, and that nothing replaced it. */
-export function SectionFailed({ title, reason }: { title: string; reason: string }) {
+export function SectionFailed({ title, reason, onRetry }: { title: string; reason: string; onRetry?: () => void }) {
   return (
     <div role="alert" className="mt-3 border-l-2 border-ink py-1 pl-3">
       <p className="head m-0 text-xl">Could not build the {title}</p>
       <p className="mb-0 mt-1 text-base">{reason}</p>
       <p className="mb-0 mt-1 text-[15px] text-sub">Nothing was made up in its place.</p>
+      {onRetry && <ChangeLink onClick={onRetry} label="Retry" />}
     </div>
   );
 }
@@ -96,7 +117,7 @@ const STATE_WORD: Record<string, string> = {
 export function Progress({ plan }: { plan: Plan }) {
   return (
     <section aria-label="Building the plan" className="pt-4">
-      <h2 className="head m-0 text-[32px] leading-none">Building your plan</h2>
+      <h2 className="head m-0 text-[32px] leading-none">{plan.revision > 1 ? "Updating the plan" : "Building your plan"}</h2>
       <ol className="m-0 mt-3 list-none border-t-2 border-ink p-0" aria-live="polite">
         {PROGRESS.map(({ section, label }) => {
           const st = plan.sectionStatus[section]?.state ?? "pending";
@@ -119,20 +140,25 @@ export function Progress({ plan }: { plan: Plan }) {
 
 // --- Timeline ---
 
-function TimelineSection({ plan, linked, warmupShown }: { plan: Partial<Plan>; linked: boolean; warmupShown: boolean }) {
+function TimelineSection({ plan, linked, warmupShown, actions }: { plan: Partial<Plan>; linked: boolean; warmupShown: boolean; actions?: PlanActions }) {
   const st = plan.sectionStatus?.timeline;
   const tl = plan.timeline;
   return (
     <section id="time" aria-labelledby="time-h" className="pt-[18px]">
       <div className="rule-B flex items-baseline justify-between pb-1.5">
         <h2 id="time-h" className="head m-0 text-2xl">Timeline</h2>
-        {tl && (
-          <span className="head text-[17px] font-semibold normal-case">
-            {tl.totalMinutes} min · {tl.provisional ? "provisional" : STATUS_WORD[tl.status] ?? tl.status}
-          </span>
-        )}
+        <span className="flex items-baseline gap-3">
+          {tl && (
+            <span className="head text-[17px] font-semibold normal-case">
+              {tl.totalMinutes} min · {tl.provisional ? "provisional" : STATUS_WORD[tl.status] ?? tl.status}
+            </span>
+          )}
+          {actions && tl && <ChangeLink onClick={() => actions.change("timeline")} />}
+        </span>
       </div>
-      {st?.state === "failed" && <SectionFailed title="timeline" reason={failReason(plan as Plan, "timeline")} />}
+      {st?.state === "failed" && (
+        <SectionFailed title="timeline" reason={failReason(plan as Plan, "timeline")} onRetry={actions && (() => actions.retry("timeline"))} />
+      )}
       {!tl && isBusy(st?.state) && <SectionWaiting title="timeline" state={st?.state} />}
       {tl?.blocks.map((b, i) => {
         const target = linked ? blockAnchor(b.section, plan) : null;
@@ -199,7 +225,7 @@ function InjuryRow({ injury, text }: { injury: Injury; text: string }) {
 
 // --- Warm-up ---
 
-function WarmupSection({ plan, at }: { plan: Partial<Plan>; at?: number }) {
+function WarmupSection({ plan, at, actions }: { plan: Partial<Plan>; at?: number; actions?: PlanActions }) {
   const st = plan.sectionStatus?.warmup;
   const w = plan.warmup;
   const title = w ? w.blocks.map((b) => b.name).join(", ") : "Warm-up";
@@ -208,11 +234,16 @@ function WarmupSection({ plan, at }: { plan: Partial<Plan>; at?: number }) {
       <div className="rule-B grid grid-cols-[48px_minmax(0,1fr)] items-end gap-1 pb-2">
         <span className="head text-[26px] leading-none">{at !== undefined ? `${two(at)}′` : ""}</span>
         <div>
-          {w && <Kicker>{`Warm-up · ${w.minutes} min`}</Kicker>}
+          <div className="flex items-baseline justify-between gap-2">
+            {w ? <Kicker>{`Warm-up · ${w.minutes} min`}</Kicker> : <span />}
+            {actions && w && <ChangeLink onClick={() => actions.change("warmup")} />}
+          </div>
           <h2 id="w-h" className={titleClass(title)}>{title}</h2>
         </div>
       </div>
-      {st?.state === "failed" && <SectionFailed title="warm-up" reason={failReason(plan as Plan, "warmup")} />}
+      {st?.state === "failed" && (
+        <SectionFailed title="warm-up" reason={failReason(plan as Plan, "warmup")} onRetry={actions && (() => actions.retry("warmup"))} />
+      )}
       {!w && isBusy(st?.state) && <SectionWaiting title="warm-up" state={st?.state} />}
       {w && (
         <>
@@ -310,15 +341,17 @@ function GridTable({ part, scaling, plan }: { part: WodPart; scaling: PartScalin
   );
 }
 
-function PartSection({ part, plan, at, audience }: { part: WodPart; plan: Partial<Plan>; at?: number; audience: Audience }) {
+function PartSection({ part, plan, at, audience, actions }: { part: WodPart; plan: Partial<Plan>; at?: number; audience: Audience; actions?: PlanActions }) {
   const scaling = plan.parts?.find((p) => p.partId === part.id);
   const st = plan.sectionStatus?.parts;
   const showToday = audience !== "athlete";
   const forRows: Partial<Plan> = showToday ? plan : { ...plan, today: undefined, injuries: undefined };
   return (
     <section id={partAnchor(part.id)} aria-labelledby={`h-${part.id}`} className="pt-7">
-      <SectionHead id={`h-${part.id}`} at={at} kicker={partKicker(part)} title={part.prescription} />
-      {st?.state === "failed" && <SectionFailed title="scaling" reason={failReason(plan as Plan, "parts")} />}
+      <SectionHead id={`h-${part.id}`} at={at} kicker={partKicker(part)} title={part.prescription} action={actions && scaling ? <ChangeLink onClick={() => actions.change("parts")} label="Change scaling" /> : undefined} />
+      {st?.state === "failed" && (
+        <SectionFailed title="scaling" reason={failReason(plan as Plan, "parts")} onRetry={actions && (() => actions.retry("parts"))} />
+      )}
       {!scaling && isBusy(st?.state) && <SectionWaiting title="scaling" state={st?.state} />}
       {scaling && (
         <>
@@ -383,11 +416,13 @@ function PartSection({ part, plan, at, audience }: { part: WodPart; plan: Partia
 
 // --- Athletes today ---
 
-function AthletesToday({ plan }: { plan: Partial<Plan> }) {
+function AthletesToday({ plan, actions }: { plan: Partial<Plan>; actions?: PlanActions }) {
   const today = plan.today ?? [];
   const injuries = plan.injuries ?? [];
   const st = plan.sectionStatus?.injuries;
-  if (!today.length && !injuries.length && st?.state !== "failed" && st?.state !== "running") return null;
+  const settled = plan.wod && !isBusy(st?.state);
+  if (!actions && !today.length && !injuries.length && st?.state !== "failed" && st?.state !== "running") return null;
+  if (actions && !settled && !today.length && !injuries.length && st?.state !== "running") return null;
   return (
     <section id="today" aria-labelledby="t-h" className="pt-7">
       <h2 id="t-h" className="head rule-B m-0 pb-1.5 text-2xl">Athletes today</h2>
@@ -397,7 +432,9 @@ function AthletesToday({ plan }: { plan: Partial<Plan> }) {
           <span className="text-[15px] text-sub">{TIER_LABEL[g.tier]} rows are marked in every part. From your comment: “{g.fromComment}”</span>
         </div>
       ))}
-      {st?.state === "failed" && <SectionFailed title="injury notes" reason={failReason(plan as Plan, "injuries")} />}
+      {st?.state === "failed" && (
+        <SectionFailed title="injury notes" reason={failReason(plan as Plan, "injuries")} onRetry={actions && (() => actions.retry("injuries"))} />
+      )}
       {st?.state === "running" && <SectionWaiting title="injury notes" state="running" />}
       {injuries.map((inj, i) => (
         <div key={i} className="rule-b py-2.5">
@@ -405,6 +442,11 @@ function AthletesToday({ plan }: { plan: Partial<Plan> }) {
           <span className="text-[15px] text-sub">{inj.caution}</span>
         </div>
       ))}
+      {actions && settled && (
+        <div className="rule-b py-2">
+          <ChangeLink onClick={actions.addInjury} label="+ Add an injury" />
+        </div>
+      )}
       <p className="mb-0 mt-3 text-sm text-sub">Injuries and your comment never appear on athlete share links.</p>
     </section>
   );
@@ -412,19 +454,19 @@ function AthletesToday({ plan }: { plan: Partial<Plan> }) {
 
 // --- The page body ---
 
-export function PlanSections({ plan, audience = "coach" }: { plan: Partial<Plan>; audience?: Audience }) {
+export function PlanSections({ plan, audience = "coach", actions }: { plan: Partial<Plan>; audience?: Audience; actions?: PlanActions }) {
   const startOf = (section: string) => plan.timeline?.blocks.find((b) => b.section === section)?.startMin;
   const parts = plan.wod?.parts ?? [];
   const wodFailed = plan.sectionStatus && isFailed(plan as Plan, "wod");
   return (
     <>
       {wodFailed && <SectionFailed title="WOD from the screenshot" reason={failReason(plan as Plan, "wod")} />}
-      <TimelineSection plan={plan} linked warmupShown={audience !== "athlete"} />
-      {audience !== "athlete" && (plan.warmup || plan.sectionStatus?.warmup) && <WarmupSection plan={plan} at={startOf("warmup")} />}
+      <TimelineSection plan={plan} linked warmupShown={audience !== "athlete"} actions={actions} />
+      {audience !== "athlete" && (plan.warmup || plan.sectionStatus?.warmup) && <WarmupSection plan={plan} at={startOf("warmup")} actions={actions} />}
       {parts.map((p) => (
-        <PartSection key={p.id} part={p} plan={plan} at={startOf(p.id)} audience={audience} />
+        <PartSection key={p.id} part={p} plan={plan} at={startOf(p.id)} audience={audience} actions={actions} />
       ))}
-      {audience !== "athlete" && <AthletesToday plan={plan} />}
+      {audience !== "athlete" && <AthletesToday plan={plan} actions={actions} />}
     </>
   );
 }
