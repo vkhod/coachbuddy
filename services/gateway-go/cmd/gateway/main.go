@@ -109,6 +109,7 @@ func main() {
 	authMux.HandleFunc("GET /api/v1/settings/models", api.ListModels)
 	authMux.HandleFunc("GET /api/v1/settings/agents", api.GetAgentPrefs)
 	authMux.HandleFunc("PUT /api/v1/settings/agents", api.SaveAgentPrefs)
+	authMux.HandleFunc("GET /api/v1/settings/runs", api.ListAgentRuns)
 
 	authMux.HandleFunc("POST /api/v1/plans", api.CreatePlan)
 	authMux.HandleFunc("GET /api/v1/plans", api.ListPlans)

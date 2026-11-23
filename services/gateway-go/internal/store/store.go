@@ -130,14 +130,19 @@ func Open(ctx context.Context, vault *crypto.Vault, cfg Config) (*DataStore, err
 		return nil, fmt.Errorf("mongodb: %w", err)
 	}
 	ds.db = mc.Database(cfg.MongoDB)
-	for coll, keys := range map[string]bson.D{
-		plansCollection: {{Key: "coachId", Value: 1}, {Key: "createdAt", Value: -1}},
-		runsCollection:  {{Key: "planId", Value: 1}, {Key: "revision", Value: 1}},
-		revsCollection:  {{Key: "planId", Value: 1}, {Key: "revision", Value: 1}},
+	for _, ix := range []struct {
+		coll string
+		keys bson.D
+	}{
+		{plansCollection, bson.D{{Key: "coachId", Value: 1}, {Key: "createdAt", Value: -1}}},
+		{runsCollection, bson.D{{Key: "planId", Value: 1}, {Key: "revision", Value: 1}}},
+		// Settings lists a coach's latest runs (ListAgentRuns).
+		{runsCollection, bson.D{{Key: "coachId", Value: 1}, {Key: "createdAt", Value: -1}}},
+		{revsCollection, bson.D{{Key: "planId", Value: 1}, {Key: "revision", Value: 1}}},
 	} {
-		if _, err := ds.db.Collection(coll).Indexes().CreateOne(ctx, mongo.IndexModel{Keys: keys}); err != nil {
+		if _, err := ds.db.Collection(ix.coll).Indexes().CreateOne(ctx, mongo.IndexModel{Keys: ix.keys}); err != nil {
 			ds.Close()
-			return nil, fmt.Errorf("mongodb index on %s: %w", coll, err)
+			return nil, fmt.Errorf("mongodb index on %s: %w", ix.coll, err)
 		}
 	}
 
@@ -419,10 +424,16 @@ func orderPrefs(list []*models.AgentModelPref) []*models.AgentModelPref {
 	return out
 }
 
+// SaveAgentPrefs saves the given roles and leaves the others as they are. A
+// preference with an empty modelIdentifier clears that role's choice: the role then
+// follows "global", and "global" follows the primary key's default model.
 func (ds *DataStore) SaveAgentPrefs(ctx context.Context, coachID string, prefs []models.AgentModelPref) ([]*models.AgentModelPref, error) {
 	for _, p := range prefs {
 		if !validRole(p.AgentRole) {
 			return nil, fmt.Errorf("%w: unknown agent role %q", ErrInvalidInput, p.AgentRole)
+		}
+		if p.ModelIdentifier == "" {
+			continue // clears the role's choice (see below)
 		}
 		if !ds.models.Allows(p.Provider, p.ModelIdentifier) {
 			return nil, fmt.Errorf("%w: model %q is not offered for provider %q", ErrInvalidInput, p.ModelIdentifier, p.Provider)
@@ -430,6 +441,12 @@ func (ds *DataStore) SaveAgentPrefs(ctx context.Context, coachID string, prefs [
 	}
 	err := pgx.BeginFunc(ctx, ds.pg, func(tx pgx.Tx) error {
 		for _, p := range prefs {
+			if p.ModelIdentifier == "" {
+				if _, err := tx.Exec(ctx, `DELETE FROM agent_model_prefs WHERE coach_id = $1 AND agent_role = $2`, coachID, p.AgentRole); err != nil {
+					return err
+				}
+				continue
+			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO agent_model_prefs (id, coach_id, agent_role, provider, model_identifier, updated_at)
 				VALUES ($1, $2, $3, $4, $5, NOW())
@@ -668,6 +685,70 @@ func (ds *DataStore) SaveAgentRuns(ctx context.Context, runs *models.AgentRuns) 
 		return fmt.Errorf("save agent runs: %w", err)
 	}
 	return nil
+}
+
+// ListAgentRuns returns the coach's latest agent runs, newest first, each with
+// its plan's WOD title and date (empty when the plan has none or is gone).
+func (ds *DataStore) ListAgentRuns(ctx context.Context, coachID string, limit int) ([]*models.AgentRunsRecord, error) {
+	opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}).SetLimit(int64(limit))
+	cur, err := ds.db.Collection(runsCollection).Find(ctx, bson.M{"coachId": coachID}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list agent runs: %w", err)
+	}
+	var docs []bson.M
+	if err := cur.All(ctx, &docs); err != nil {
+		return nil, fmt.Errorf("list agent runs: %w", err)
+	}
+	out := make([]*models.AgentRunsRecord, 0, len(docs))
+	planIDs := []string{}
+	for _, d := range docs {
+		m := plainDoc(d)
+		rec := &models.AgentRunsRecord{Runs: m["runs"], OrchestrationLatencyMs: m["orchestrationLatencyMs"]}
+		rec.PlanID, _ = m["planId"].(string)
+		switch n := m["revision"].(type) {
+		case int32:
+			rec.Revision = int(n)
+		case int64:
+			rec.Revision = int(n)
+		case float64:
+			rec.Revision = int(n)
+		}
+		if t, ok := d["createdAt"].(primitive.DateTime); ok {
+			rec.CreatedAt = t.Time().UTC()
+		}
+		if rec.Runs == nil {
+			rec.Runs = []interface{}{}
+		}
+		out = append(out, rec)
+		planIDs = append(planIDs, rec.PlanID)
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	pcur, err := ds.db.Collection(plansCollection).Find(ctx,
+		bson.M{"_id": bson.M{"$in": planIDs}, "coachId": coachID},
+		options.Find().SetProjection(bson.M{"wod.title": 1, "wod.date": 1}))
+	if err != nil {
+		return nil, fmt.Errorf("list agent runs: plans: %w", err)
+	}
+	var plans []bson.M
+	if err := pcur.All(ctx, &plans); err != nil {
+		return nil, fmt.Errorf("list agent runs: plans: %w", err)
+	}
+	type wodInfo struct{ title, date string }
+	byID := map[string]wodInfo{}
+	for _, p := range plans {
+		m := plainDoc(p)
+		id, _ := m["_id"].(string)
+		wod, _ := m["wod"].(map[string]interface{})
+		title, _ := wod["title"].(string)
+		date, _ := wod["date"].(string)
+		byID[id] = wodInfo{title, date}
+	}
+	for _, rec := range out {
+		rec.PlanTitle, rec.WodDate = byID[rec.PlanID].title, byID[rec.PlanID].date
+	}
+	return out, nil
 }
 
 // SavePlanRevision records one revision of a plan (upsert by plan and number).
