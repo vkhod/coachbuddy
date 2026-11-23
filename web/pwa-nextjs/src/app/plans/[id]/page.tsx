@@ -7,7 +7,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { PlanSections, Progress } from "@/components/PlanView";
+import { ChangeSheet, type ChangeMode } from "@/components/ChangeSheet";
+import { PlanSections, Progress, type PlanActions, type Refinable } from "@/components/PlanView";
 import { ShareSheet } from "@/components/ShareSheet";
 import { BackIcon, ErrorNote, Loading, Screen, ShareIcon } from "@/components/ui";
 import { isGenerating, partAnchor, partLabel, planTitle, todaySummary } from "@/lib/plan";
@@ -38,6 +39,7 @@ export default function PlanPage() {
   useCoach();
   const { plan, error, reload } = usePlan(id);
   const [sharing, setSharing] = useState(false);
+  const [sheet, setSheet] = useState<{ section: Refinable; mode: ChangeMode } | null>(null);
 
   const jumps = useMemo(() => {
     const parts = plan?.wod?.parts ?? [];
@@ -70,6 +72,15 @@ export default function PlanPage() {
 
   const generating = isGenerating(plan);
   const context = todaySummary(plan);
+  // Changes wait until the plan is settled; the gateway answers 409 otherwise.
+  const actions: PlanActions | undefined =
+    generating || !plan.wod
+      ? undefined
+      : {
+          change: (section) => setSheet({ section, mode: "change" }),
+          retry: (section) => setSheet({ section, mode: "retry" }),
+          addInjury: () => setSheet({ section: "injuries", mode: "add-injury" }),
+        };
 
   return (
     <Screen>
@@ -79,9 +90,13 @@ export default function PlanPage() {
             <BackIcon />
           </Link>
           <h1 className="head m-0 flex-1 truncate text-2xl">{planTitle(plan)}</h1>
-          <span className="head tap flex items-center justify-center text-lg normal-case" title="Version">
+          <Link
+            href={`/plans/${plan.planId}/versions`}
+            aria-label={`Version ${plan.revision}, see all versions`}
+            className="head tap flex items-center justify-center text-lg normal-case underline underline-offset-4"
+          >
             v{plan.revision}
-          </span>
+          </Link>
           <button
             type="button"
             aria-label="Share"
@@ -117,10 +132,23 @@ export default function PlanPage() {
         )}
         {error && <ErrorNote message={error.message} onRetry={reload} />}
         {generating && <Progress plan={plan} />}
-        <PlanSections plan={plan} />
+        <PlanSections plan={plan} actions={actions} />
       </main>
 
       {sharing && <ShareSheet planId={plan.planId} onClose={() => setSharing(false)} />}
+      {sheet && (
+        <ChangeSheet
+          planId={plan.planId}
+          revision={plan.revision}
+          section={sheet.section}
+          mode={sheet.mode}
+          onStarted={() => {
+            void reload();
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
     </Screen>
   );
 }
