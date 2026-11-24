@@ -1,10 +1,13 @@
 // /brand/logo and /brand/icon: the images named in the branding file. Without a
 // logo, /brand/logo is 404 (the header shows the name instead); without an icon,
 // /brand/icon is the built-in one.
+// /brand/icon-192.png, icon-512.png, icon-maskable.png and apple-icon.png: PNGs
+// rendered from that icon for the manifest and iOS (src/lib/icons.ts).
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { getBranding, IMAGE_TYPES } from "@/lib/branding";
+import { brandIcon, isIconName } from "@/lib/icons";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +15,12 @@ const BUILT_IN_ICON = path.join(process.cwd(), "public", "icon.svg");
 
 export async function GET(_req: Request, { params }: { params: Promise<{ asset: string }> }) {
   const { asset } = await params;
+  if (isIconName(asset)) {
+    const png = await brandIcon(asset);
+    return new Response(new Uint8Array(png), {
+      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff" },
+    });
+  }
   const b = getBranding();
   let file: string | null;
   if (asset === "logo") file = b.logoPath;
