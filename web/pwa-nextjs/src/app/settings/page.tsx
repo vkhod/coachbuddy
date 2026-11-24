@@ -1,15 +1,16 @@
 "use client";
 
-// Settings: profile, AI key, sign out. Model choice and agent runs ("Advanced")
-// come in Phase 3 step 5.
+// Settings: profile, AI key, model (with per-agent models and the agent runs
+// under Advanced), sign out. Keys, models and runs live only here (plan D2).
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { useBrand } from "@/components/Brand";
 import { KeyForm } from "@/components/KeyForm";
+import { ModelSettings } from "@/components/ModelSettings";
 import { BackHeader, ClassLength, ErrorNote, Screen } from "@/components/ui";
 import { ApiError, deleteKey, listKeys, listModels, updateProfile } from "@/lib/api";
-import type { ApiKey, Provider } from "@/lib/gateway-types";
+import type { ApiKey, ModelCatalog } from "@/lib/gateway-types";
 import { clearToken } from "@/lib/session";
 import { useCoach } from "@/lib/useCoach";
 
@@ -35,7 +36,7 @@ export default function SettingsPage() {
   const [profileError, setProfileError] = useState<string | null>(null);
 
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
 
@@ -51,7 +52,7 @@ export default function SettingsPage() {
     Promise.all([listKeys(), listModels()])
       .then(([k, c]) => {
         setKeys(k);
-        setProviders(c.providers);
+        setCatalog(c);
       })
       .catch((e) => setKeyError(msg(e)));
   };
@@ -82,7 +83,7 @@ export default function SettingsPage() {
   }
 
   const primary = keys?.find((k) => k.isPrimary) ?? keys?.[0];
-  const providerLabel = (id: string) => providers.find((p) => p.id === id)?.label ?? id;
+  const providerLabel = (id: string) => catalog?.providers.find((p) => p.id === id)?.label ?? id;
 
   return (
     <Screen>
@@ -150,6 +151,13 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
+
+        {keys && primary && catalog && (
+          <section aria-labelledby="m-h" className="pt-6">
+            <h2 id="m-h" className="head rule-B m-0 pb-1.5 text-2xl">Model</h2>
+            <ModelSettings keys={keys} catalog={catalog} />
+          </section>
+        )}
 
         <div className="min-h-8 flex-1" />
         <button

@@ -6,6 +6,8 @@ import type { CreatePlanRequest } from "./contract/create-plan.request";
 import type { Plan } from "./contract/plan";
 import type { PlanRevision } from "./contract/plan-revision";
 import type {
+  AgentPref,
+  AgentRunsRecord,
   ApiKey,
   AuthResponse,
   Coach,
@@ -99,6 +101,15 @@ export const saveKey = (provider: string, apiKey: string) =>
 export const deleteKey = (id: string) => request<unknown>(`/api/v1/settings/keys/${id}`, { method: "DELETE" });
 
 export const listModels = () => request<ModelCatalog>("/api/v1/settings/models");
+
+export const getAgentPrefs = () => request<{ preferences: AgentPref[] }>("/api/v1/settings/agents").then((r) => r.preferences);
+
+/** Saves the given roles only; an empty modelIdentifier clears that role's choice. */
+export const saveAgentPrefs = (preferences: Pick<AgentPref, "agentRole" | "provider" | "modelIdentifier">[]) =>
+  request<{ preferences: AgentPref[] }>("/api/v1/settings/agents", { method: "PUT", body: { preferences } }).then((r) => r.preferences);
+
+export const listAgentRuns = (limit = 20) =>
+  request<{ runs: AgentRunsRecord[] }>(`/api/v1/settings/runs?limit=${limit}`).then((r) => r.runs);
 
 // --- Plans ---
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ type Store interface {
 	DeletePlan(ctx context.Context, planID string) error
 	SavePlanImage(ctx context.Context, img *models.PlanImage) error
 	SaveAgentRuns(ctx context.Context, runs *models.AgentRuns) error
+	ListAgentRuns(ctx context.Context, coachID string, limit int) ([]*models.AgentRunsRecord, error)
 	SavePlanRevision(ctx context.Context, rev *models.PlanRevision) error
 	ListPlanRevisions(ctx context.Context, planID string) ([]*models.PlanRevision, error)
 	GetPlanRevision(ctx context.Context, planID string, revision int) (*models.PlanRevision, error)
@@ -372,6 +374,28 @@ func (h *APIHandler) SaveAgentPrefs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"preferences": prefs})
+}
+
+// ListAgentRuns returns the coach's latest agent runs for Settings: which agent
+// ran each section, on which provider and model, how many attempts, how long,
+// the MCP tools it called and why it failed. ?limit= (1 to 50, default 20).
+func (h *APIHandler) ListAgentRuns(w http.ResponseWriter, r *http.Request) {
+	coachID := auth.GetCoachID(r.Context())
+	limit := 20
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 || n > 50 {
+			writeError(w, http.StatusBadRequest, "limit must be a number from 1 to 50")
+			return
+		}
+		limit = n
+	}
+	runs, err := h.Store.ListAgentRuns(r.Context(), coachID, limit)
+	if err != nil {
+		writeStoreError(w, "list agent runs", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"runs": runs})
 }
 
 // ListModels returns the providers and models a coach can choose (internal/modelcatalog).

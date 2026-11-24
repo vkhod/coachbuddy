@@ -3,11 +3,13 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/coachbuddy/gateway-go/internal/auth"
+	"github.com/coachbuddy/gateway-go/internal/models"
 )
 
 func newTestAPIHandler(t *testing.T) (*APIHandler, *fakeStore) {
@@ -52,5 +54,47 @@ func TestListModels_ReturnsTheConfiguredList(t *testing.T) {
 	}
 	if len(body.Models) == 0 || body.Models[0].ID != "gemini/gemini-3.8-flash" || !body.Models[0].Default {
 		t.Errorf("models: %+v", body.Models)
+	}
+}
+
+func TestListAgentRuns_OwnRunsOnlyAndLimitChecked(t *testing.T) {
+	api, fs := newTestAPIHandler(t)
+	ctx := context.Background()
+	runs := []interface{}{map[string]interface{}{"agent": "parser", "section": "wod", "model": "gemini/gemini-3.8-flash", "state": "done"}}
+	if err := fs.SaveAgentRuns(ctx, &models.AgentRuns{PlanID: "pl-a", CoachID: "coach-alpha", Revision: 1, Runs: runs}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.SaveAgentRuns(ctx, &models.AgentRuns{PlanID: "pl-b", CoachID: "coach-beta", Revision: 1, Runs: runs}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	api.ListAgentRuns(rr, requestAs(http.MethodGet, "/api/v1/settings/runs", "coach-alpha", ""))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body)
+	}
+	var body struct {
+		Runs []models.AgentRunsRecord `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Runs) != 1 || body.Runs[0].PlanID != "pl-a" {
+		t.Errorf("coach-alpha should see only pl-a: %+v", body.Runs)
+	}
+
+	for _, q := range []string{"0", "51", "x"} {
+		rr := httptest.NewRecorder()
+		api.ListAgentRuns(rr, requestAs(http.MethodGet, "/api/v1/settings/runs?limit="+q, "coach-alpha", ""))
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("limit=%s: expected 400, got %d", q, rr.Code)
+		}
+	}
+
+	fs.fail = errors.New("mongo down")
+	rr = httptest.NewRecorder()
+	api.ListAgentRuns(rr, requestAs(http.MethodGet, "/api/v1/settings/runs", "coach-alpha", ""))
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("store failure: expected 500, got %d", rr.Code)
 	}
 }

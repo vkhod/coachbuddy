@@ -100,6 +100,18 @@ type AgentRuns struct {
 	OrchestrationLatencyMs interface{}
 }
 
+// AgentRunsRecord is one stored AgentRuns as Settings lists it, with the plan's
+// WOD title and date so the coach can tell the runs apart.
+type AgentRunsRecord struct {
+	PlanID                 string      `json:"planId"`
+	Revision               int         `json:"revision"`
+	CreatedAt              time.Time   `json:"createdAt"`
+	PlanTitle              string      `json:"planTitle"`
+	WodDate                string      `json:"wodDate"`
+	Runs                   interface{} `json:"runs"`
+	OrchestrationLatencyMs interface{} `json:"orchestrationLatencyMs"`
+}
+
 type SharedLink struct {
 	ShortCode         string     `json:"shortCode"`
 	ShareURL          string     `json:"shareUrl"`
