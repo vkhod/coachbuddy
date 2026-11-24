@@ -22,6 +22,8 @@ This directory contains `pwa-nextjs` (`:3000`), the TypeScript + Next.js 16 (App
 - `src/app/globals.css` and `tailwind.config.ts`: the programme sheet look. Colours are CSS variables (`--paper`, `--ink`, `--sub`, `--rule`, `--accent`, `--card`); the defaults in `globals.css` match `DEFAULT_BRANDING`, and the layout overrides them from the branding file. Use the Tailwind names (`bg-paper`, `text-ink`), never literal colours.
 - Branding (Phase 3 step 5): `src/lib/branding.ts` reads `BRANDING_FILE` once on the server (name, colours, logo, icon; see `config/branding/README.md`), checks it, and `src/instrumentation.ts` stops the server when it is invalid. The root layout writes the colours as CSS variables and passes name and logo to client components through `BrandProvider` (`src/components/Brand.tsx`; `BrandMark` is the header logo or name). `/brand/logo`, `/brand/icon` and `/manifest.webmanifest` are route handlers built from it. Never hard-code the box name in a page; use `useBrand()`.
 - App icons (Phase 4 step 1): `src/lib/icons.ts` renders PNGs from the branding icon with `sharp`, once per process: `/brand/icon-192.png`, `/brand/icon-512.png` (purpose `any`), `/brand/icon-maskable.png` (the picture at 80% on `paper`, the Android safe zone) and `/brand/apple-icon.png` (180 px, opaque). The manifest lists only these PNGs. `orientation` stays `any` (WCAG 1.3.4; decided 2026-11-24). `npm run check:pwa` (after `npm run build`, also in CI) starts the standalone build with the built-in and the Attakashaka branding and checks the manifest and every icon.
+- Service worker (Phase 4 step 2): hand-written, `src/lib/sw-script.ts` (the rules, as one script string) served by `src/app/sw.js/route.ts`, which adds the version (`.next/BUILD_ID` plus a hash of the branding), the build files to precache (all of `.next/static` except `.woff` and `.map`) and the pages kept from the start (`/`, `/history`, `/login`, `/welcome`). `src/components/ServiceWorker.tsx` registers it in production builds only (`/sw.js` is 404 under `next dev`) and shows "New version available." with Reload when a new worker waits; the worker never calls `skipWaiting` by itself. Kept pages are client pages with no coach data in the HTML; never keep a page whose HTML carries coach data. The worker ignores other origins, `/api/` and RSC requests. `npm run check:pwa` also checks `/sw.js` and that every file and page it lists answers 200.
+- `src/lib/online.ts`: `useOnline()`. Offline, Capture and the Change sheet say a connection is needed and disable their submit buttons. That note is not a fallback: nothing is built or sent.
 - `public/icon.svg`: the built-in icon, used when the branding has none.
 
 ---
@@ -55,6 +57,6 @@ npm run dev
 # Type-check and build production bundle
 npm run build
 
-# Check the manifest and app icons on that build
+# Check the manifest, app icons and service worker on that build
 npm run check:pwa
 ```

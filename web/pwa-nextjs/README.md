@@ -24,6 +24,10 @@ Every plan comes from the agents with the coach's own key. When the gateway or a
 
 A box's name, colours, logo and icon can replace Coach Buddy's without a rebuild: set `BRANDING_FILE` to a JSON file (with `BRANDING_DIR` as the mounted folder in Docker Compose). The server checks the file and the contrast of its colours at start and stops with the reason when it is invalid. Fields and setup: [`config/branding/README.md`](../../config/branding/README.md); a complete example: [`config/branding/attakashaka/`](../../config/branding/attakashaka/).
 
+## Installing and offline
+
+The app installs from the browser (Android Chrome: menu, Install app). A service worker keeps the app's own files and the Capture, History, Sign in and first-key pages on the phone, so the app opens without a connection. Building or changing a plan always needs a connection; offline, those buttons are disabled with a note. When a new version is deployed, a bar at the bottom offers Reload; the app never switches versions under the coach by itself. The worker runs only in a production build (`npm run build`, then the standalone server), not under `npm run dev`. Browsers allow a service worker only on HTTPS or `localhost`.
+
 ## Accessibility
 
 - Tap targets are at least 44 x 44 px, and the viewport allows zoom.
@@ -37,6 +41,7 @@ A box's name, colours, logo and icon can replace Coach Buddy's without a rebuild
 npm install
 npm run dev     # :3000, against NEXT_PUBLIC_API_URL (default http://localhost:8080)
 npm run build   # type check and production build
+npm run check:pwa  # manifest, icons and service worker on that build
 ```
 
 The gateway, its databases and mcp-rust must be running; see the root [README](../../README.md). Agent rules for this directory are in [AGENTS.md](AGENTS.md).
