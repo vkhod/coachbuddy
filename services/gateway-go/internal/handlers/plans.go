@@ -395,6 +395,14 @@ func (h *APIHandler) failPlan(ctx context.Context, job planJob, reason string) {
 			status[s] = map[string]interface{}{"state": "failed", "error": reason}
 		}
 	}
+	// Without a warm-up the timeline is provisional, the same rule agents-python
+	// applies when it reports the failure itself (pipeline.py). Here it matters
+	// after a failed warm-up change, where the old timeline stays.
+	if st, _ := status["warmup"].(map[string]interface{}); st["state"] != "done" {
+		if tl, ok := doc["timeline"].(map[string]interface{}); ok {
+			tl["provisional"] = true
+		}
+	}
 	doc["updatedAt"] = nowString()
 	if err := h.Store.SavePlan(ctx, job.PlanID, doc); err != nil {
 		log.Printf("[gateway] plan %s: cannot record the failure: %v", job.PlanID, err)
