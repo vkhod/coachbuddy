@@ -6,6 +6,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { BrandMark } from "@/components/Brand";
 import { PlanSections } from "@/components/PlanView";
 import { ErrorNote, Loading, Screen } from "@/components/ui";
 import { ApiError, resolveShare } from "@/lib/api";
@@ -30,7 +31,7 @@ export default function SharePage() {
     return (
       <Screen>
         <header className="rule-B px-4 py-3">
-          <span className="head text-[22px] tracking-wide">Coach Buddy</span>
+          <BrandMark />
         </header>
         {error ? (
           <div className="px-4">
@@ -48,13 +49,16 @@ export default function SharePage() {
   return (
     <Screen>
       <header className="rule-B px-4 pb-3 pt-4">
-        <span className="head block text-base text-sub">Coach Buddy · {coachView ? "coach view" : "athlete view"}</span>
+        <div className="flex items-center justify-between gap-3 pb-2">
+          <BrandMark />
+          <span className="head text-base text-sub">{coachView ? "Coach view" : "Athlete view"}</span>
+        </div>
         <h1 className="head m-0 text-[36px] leading-none">{planTitle(plan)}</h1>
         {plan.timeline && <span className="head text-lg font-semibold text-sub">{plan.timeline.totalMinutes} min class</span>}
       </header>
       <main className="px-4 pb-12">
         <PlanSections plan={plan} audience={coachView ? "coach-share" : "athlete"} />
-        <p className="mt-8 text-sm text-sub">Shared by your coach with Coach Buddy.</p>
+        <p className="mt-8 text-sm text-sub">Shared by your coach.</p>
       </main>
     </Screen>
   );

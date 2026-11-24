@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { BrandMark } from "@/components/Brand";
 import { useEffect, useMemo, useState } from "react";
 import { ErrorNote, Loading, Screen, SettingsIcon } from "@/components/ui";
 import { ApiError, listPlans } from "@/lib/api";
@@ -54,8 +55,8 @@ export default function HistoryPage() {
   return (
     <Screen>
       <header className="rule-B flex h-14 items-center pl-4 pr-1">
-        <Link href="/" className="head flex-1 text-[22px] tracking-wide no-underline">
-          Coach Buddy
+        <Link href="/" className="flex flex-1 items-center no-underline">
+          <BrandMark />
         </Link>
         <Link href="/settings" aria-label="Settings" className="tap flex items-center justify-center">
           <SettingsIcon />

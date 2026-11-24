@@ -19,6 +19,11 @@ bin/
 .env.*.local
 .coachbuddy_vault.json
 
+# A box's own branding files (only the README and the example are in the repo)
+config/branding/*
+!config/branding/README.md
+!config/branding/example.json
+
 # Working copies written by Claude sessions
 Claude outputs/
 

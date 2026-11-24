@@ -143,6 +143,11 @@ services:
     logging: *default-logging
     environment:
       INTERNAL_GATEWAY_URL: http://gateway-go:8080
+      # Optional box branding: a file inside the mounted folder, for example
+      # /config/branding/branding.json. Empty = Coach Buddy. See config/branding/README.md.
+      BRANDING_FILE: ${BRANDING_FILE:-}
+    volumes:
+      - ${BRANDING_DIR:-./config/branding}:/config/branding:ro
     depends_on:
       - gateway-go
 
