@@ -163,6 +163,15 @@ func TestIntegration_KeysPrefsAndRouting(t *testing.T) {
 		t.Fatalf("save prefs: %+v, %v", saved, err)
 	}
 
+	// An empty model clears a role's choice; the other roles stay.
+	if _, err := ds.SaveAgentPrefs(ctx, a.ID, []models.AgentModelPref{{AgentRole: "parser", Provider: "openai", ModelIdentifier: "openai/gpt-5.4-mini"}}); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := ds.SaveAgentPrefs(ctx, a.ID, []models.AgentModelPref{{AgentRole: "parser"}})
+	if err != nil || len(cleared) != 1 || cleared[0].AgentRole != "warmup" {
+		t.Fatalf("clear parser: want only warmup left, got %+v, %v", cleared, err)
+	}
+
 	routes, err := ds.BuildEphemeralRoutingConfig(ctx, a.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -295,6 +304,55 @@ func TestIntegration_Plans(t *testing.T) {
 	}
 	if err := ds.DeletePlan(ctx, "pl-old"); !errors.Is(err, ErrPlanNotFound) {
 		t.Errorf("second delete: want ErrPlanNotFound, got %v", err)
+	}
+}
+
+func TestIntegration_AgentRuns(t *testing.T) {
+	ds := openTestStore(t)
+	ctx := context.Background()
+	if err := ds.CreatePlan(ctx, map[string]interface{}{
+		"planId": "pl-runs", "coachId": "alpha", "revision": 2,
+		"wod": map[string]interface{}{"title": "Build and Engine", "date": "2026-11-18"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run := func(agent string) []interface{} {
+		return []interface{}{map[string]interface{}{"agent": agent, "section": "warmup", "attempts": 1, "tools": []interface{}{"get_history"}}}
+	}
+	for _, r := range []*models.AgentRuns{
+		{PlanID: "pl-runs", CoachID: "alpha", Revision: 1, Runs: run("first"), OrchestrationLatencyMs: 900},
+		{PlanID: "pl-runs", CoachID: "alpha", Revision: 2, Runs: run("second")},
+		{PlanID: "pl-gone", CoachID: "alpha", Revision: 1, Runs: run("orphan")},
+		{PlanID: "pl-other", CoachID: "beta", Revision: 1, Runs: run("beta")},
+	} {
+		if err := ds.SaveAgentRuns(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond) // distinct createdAt for the order
+	}
+	list, err := ds.ListAgentRuns(ctx, "alpha", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].PlanID != "pl-gone" || list[1].Revision != 2 {
+		t.Fatalf("want the two newest of alpha, newest first: %+v", list)
+	}
+	if list[0].PlanTitle != "" || list[1].PlanTitle != "Build and Engine" || list[1].WodDate != "2026-11-18" {
+		t.Errorf("titles: %q, %q %q", list[0].PlanTitle, list[1].PlanTitle, list[1].WodDate)
+	}
+	if list[1].CreatedAt.IsZero() {
+		t.Error("createdAt not read")
+	}
+	runs, ok := list[1].Runs.([]interface{})
+	if !ok || len(runs) != 1 {
+		t.Fatalf("runs should decode as a plain list: %#v", list[1].Runs)
+	}
+	if m, ok := runs[0].(map[string]interface{}); !ok || m["agent"] != "second" {
+		t.Errorf("run entry should be a plain map: %#v", runs[0])
+	}
+	all, err := ds.ListAgentRuns(ctx, "alpha", 50)
+	if err != nil || len(all) != 3 {
+		t.Errorf("alpha has three runs: %d, %v", len(all), err)
 	}
 }
 
