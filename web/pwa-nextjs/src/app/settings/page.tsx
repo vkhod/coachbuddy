@@ -18,9 +18,9 @@ const msg = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="rule-b grid min-h-11 grid-cols-[96px_minmax(0,1fr)] items-center gap-2 py-2">
+    <div className="rule-b pair min-h-11 items-center gap-y-1 py-2 [--min:10rem] [--side:96px]">
       <span className="head text-lg">{label}</span>
-      <span className="text-base">{children}</span>
+      <span className="text-base [overflow-wrap:anywhere]">{children}</span>
     </div>
   );
 }
@@ -95,12 +95,12 @@ export default function SettingsPage() {
         <section aria-labelledby="p-h" className="pt-5">
           <h2 id="p-h" className="head rule-B m-0 pb-1.5 text-2xl">Profile</h2>
           <form onSubmit={saveProfile}>
-            <div className="rule-b grid min-h-11 grid-cols-[96px_minmax(0,1fr)] items-center gap-2 py-2">
+            <div className="rule-b pair min-h-11 items-center gap-y-1 py-2 [--min:10rem] [--side:96px]">
               <label htmlFor="name" className="head text-lg">Name</label>
               <input id="name" value={name} onChange={(e) => setName(e.target.value)} className="field py-2" />
             </div>
             {coach && <Row label="Email">{coach.email}</Row>}
-            <div className="rule-b grid min-h-11 grid-cols-[96px_minmax(0,1fr)] items-center gap-2 py-2">
+            <div className="rule-b pair min-h-11 items-center gap-y-1 py-2 [--min:10rem] [--side:96px]">
               <label htmlFor="box" className="head text-lg">Box</label>
               <input id="box" value={box} onChange={(e) => setBox(e.target.value)} className="field py-2" />
             </div>

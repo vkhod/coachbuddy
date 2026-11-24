@@ -1,23 +1,42 @@
-# CoachBuddy Next.js TypeScript PWA (`web/pwa-nextjs`)
+# CoachBuddy coach app (`web/pwa-nextjs`)
 
-High-contrast **Tactical Athletic Box** Next.js 16 App Router PWA for CrossFit & functional fitness coaches.
+The phone app a coach uses to build a WOD plan: Next.js 16 (App Router), React 19, TypeScript and Tailwind CSS. It builds a plan to read before and during class; there is no class timer.
 
-## Key Features
-- **Tab 1: WOD Session Planner & Multi-Agent Stepper**:
-  - One-click CrossFit WOD presets (*"Heavy Front Squat + Fran-style Thruster/Pull-up Metcon"*, *"Snatch Skill + 20m Engine EMOM"*, *"Deadlift & Box Jump Partner Grinder"*).
-  - Drag-and-drop / paste WOD Whiteboard Screenshot (multimodal vision input) + text input.
-  - Quick-select Warm-up & Coaching Cue style chips (*"Mostly Broomstick / PVC"*, *"Gamified / Reaction Drill"*, *"Partner Warm-up"*, *"Thoracic & Overhead Mobility"*, *"No Running / Row & Bike Only"*).
-  - Class Duration Selector (`45`, `60`, `75`, `90 min` — default `60 min`).
-  - Live Multi-Agent Execution Stepper tracking `WodParserAgent` $\rightarrow$ `WarmupPlannerAgent` + `ScalingAndCuesAgent` $\rightarrow$ `TimelineLogisticsAgent`.
-- **Tab 2: Active Session Plan**:
-  - Proportional minute-by-minute class timeline bar with feasibility badges (`OPTIMAL`, `TIGHT`, `OVERFLOW`) and logistics warnings.
-  - Non-repetitive 2-phase Warm-up card (Reaction Game + PVC Broomstick Mobility Drills).
-  - Interactive **4-Tier Movement Scaling Matrix** (`Rx+`, `Scaled`, `Masters / Seniors`, and `Injured Alternatives` for Wrist/Shoulder, Knee Pain, and Lower Back) + External/Internal Cues & Common Fault $\rightarrow$ Fix pairs.
-  - One-click **Share Session & Rust SVG QR Code Modal** (`Co-Coach View` vs `Athlete View`).
-- **Tab 3: Session History Library**:
-  - Searchable history of generated WOD sessions with one-click load into the plan view.
-- **Tab 4: BYOK Encrypted Key Vault & Per-Agent LLM Router**:
-  - Manage AES-256-GCM encrypted API keys for `Google Gemini`, `OpenAI`, `Anthropic Claude`, and `Groq`.
-  - Route all agents through a single Global model or configure per-agent provider/model overrides.
-- **Public Share Route (`/s/[code]`)**:
-  - Mobile-friendly SSR/CSR shared WOD & 4-tier scaling page for co-coaches and athletes scanning the QR code at the whiteboard.
+Every plan comes from the agents with the coach's own key. When the gateway or a section fails, the app shows the reason and a retry. It never builds or stores anything locally.
+
+## Screens
+
+- **Capture (`/`)**: the WOD screenshot, an optional comment (who is in class today, injuries, warm-up wishes) and the class length (45, 60, 75 or 90 min). Build plan starts the generation.
+- **Plan (`/plans/[id]`)**: the plan in class order, filled in section by section while it is built:
+  - timeline with start and end minutes; each row jumps to its section;
+  - warm-up: targets, blocks and minutes;
+  - each WOD part with its tiers: RX, Scaled and Senior on every part, RX+ on engine parts. Engine parts with up to five movements are shown as a grid;
+  - athletes today and injuries, marked in the accent colour, with an injury row in the warm-up and in every part.
+
+  Change, Retry and Add an injury open a sheet with the fixed chips (Shorter, Longer, Simpler, and so on); only the instruction text is sent. A failed section shows the reason and a Retry button.
+- **Versions (`/plans/[id]/versions`)**: what each revision changed, with restore. Earlier versions open read only.
+- **History (`/history`)**: plans by date, with search.
+- **Settings (`/settings`)**: profile and default class length, the AI key (stored encrypted by the gateway, shown masked), and **Model**: one model for all agents, or one per agent under Advanced (Board, Warm-up, Scaling, Injuries, Timeline). Only providers with a saved key are offered, and Board only offers models that read images. **Agent runs** (`/settings/runs`) lists what ran for each revision.
+- **Share (`/s/[code]`)**: the public page behind a share link or QR code. The athlete view has the WOD, the tiers and the timeline; the coach view adds the warm-up, today's athletes, injuries and cues. The gateway decides what is in each view.
+- **Sign in (`/login`)** and **first key (`/welcome`)**.
+
+## Branding
+
+A box's name, colours, logo and icon can replace Coach Buddy's without a rebuild: set `BRANDING_FILE` to a JSON file (with `BRANDING_DIR` as the mounted folder in Docker Compose). The server checks the file and the contrast of its colours at start and stops with the reason when it is invalid. Fields and setup: [`config/branding/README.md`](../../config/branding/README.md); a complete example: [`config/branding/attakashaka/`](../../config/branding/attakashaka/).
+
+## Accessibility
+
+- Tap targets are at least 44 x 44 px, and the viewport allows zoom.
+- Text and the accent colour have at least 4.5:1 contrast on the page background (WCAG AA). Branded colours are checked against the same limit at start.
+- At 200% page zoom or font size, rows with a label column (tiers, injuries, warm-up targets, settings) put the text under the label instead of squeezing it, and nothing scrolls sideways. The engine grid is a table that scrolls sideways inside its own box.
+- The `narrow` Tailwind screen (below 360 CSS px, which on a 390 px phone means about 110% zoom and more) moves the plan title to its own line and the timeline labels under their times.
+
+## Commands
+
+```bash
+npm install
+npm run dev     # :3000, against NEXT_PUBLIC_API_URL (default http://localhost:8080)
+npm run build   # type check and production build
+```
+
+The gateway, its databases and mcp-rust must be running; see the root [README](../../README.md). Agent rules for this directory are in [AGENTS.md](AGENTS.md).

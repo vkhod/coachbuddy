@@ -56,7 +56,7 @@ export const CameraIcon = () => (
 export function AppHeader({ history = true, settings = true }: { history?: boolean; settings?: boolean }) {
   return (
     <header className="rule-B flex h-14 items-center pl-4 pr-1">
-      <Link href="/" className="flex flex-1 items-center no-underline">
+      <Link href="/" className="flex flex-1 items-center self-stretch no-underline">
         <BrandMark />
       </Link>
       {history && (
@@ -105,15 +105,15 @@ export function ClassLength({
   return (
     <fieldset className="m-0 border-0 p-0">
       <legend className="head pb-2 pt-[18px] text-lg">{legend}</legend>
-      <div className="grid grid-cols-4 border border-ink">
-        {CLASS_LENGTHS.map((n, i) => {
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(4.5rem,1fr))] gap-px border border-ink bg-ink">
+        {CLASS_LENGTHS.map((n) => {
           const on = n === value;
           return (
             <label
               key={n}
               className={`head flex h-[46px] cursor-pointer items-center justify-center text-xl has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 ${
-                i > 0 ? "border-l border-ink" : ""
-              } ${on ? "bg-ink text-paper" : ""}`}
+                on ? "bg-ink text-paper" : "bg-paper"
+              }`}
             >
               <input
                 type="radio"

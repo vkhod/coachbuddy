@@ -47,7 +47,21 @@ html {
     @apply head flex h-14 w-full items-center justify-center rounded-sm bg-ink text-[22px] tracking-wide text-paper disabled:opacity-40;
   }
   .field {
-    @apply w-full rounded-sm border border-ink bg-card px-3 py-2.5 text-base text-ink;
+    @apply min-h-11 w-full rounded-sm border border-ink bg-card px-3 py-2.5 text-base text-ink;
+  }
+  /* A label column beside its text. The label keeps --side; the text moves
+     under it when less than --min is left (large text, page zoom). */
+  .pair {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 0.5rem;
+  }
+  .pair > :first-child {
+    flex: 0 0 var(--side, 6rem);
+  }
+  .pair > :last-child {
+    flex: 1 1 var(--min, 9rem);
+    min-width: 0;
   }
 }
 
