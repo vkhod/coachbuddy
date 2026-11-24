@@ -55,7 +55,7 @@ export default function HistoryPage() {
   return (
     <Screen>
       <header className="rule-B flex h-14 items-center pl-4 pr-1">
-        <Link href="/" className="flex flex-1 items-center no-underline">
+        <Link href="/" className="flex flex-1 items-center self-stretch no-underline">
           <BrandMark />
         </Link>
         <Link href="/settings" aria-label="Settings" className="tap flex items-center justify-center">
@@ -89,7 +89,7 @@ export default function HistoryPage() {
           <ol className="m-0 mt-4 list-none border-t-2 border-ink p-0">
             {shown.map((p) => (
               <li key={p.planId}>
-                <Link href={`/plans/${p.planId}`} className="rule-b grid min-h-[60px] grid-cols-[64px_minmax(0,1fr)] items-baseline gap-2 py-3 no-underline">
+                <Link href={`/plans/${p.planId}`} className="rule-b pair min-h-[60px] items-baseline gap-y-1 py-3 no-underline [--side:4rem]">
                   <span className="head text-2xl">{shortDate(p)}</span>
                   <span>
                     <span className="block text-base leading-snug">{summary(p)}</span>

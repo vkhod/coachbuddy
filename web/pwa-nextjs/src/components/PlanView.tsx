@@ -63,10 +63,10 @@ function partKicker(part: WodPart): string {
 
 function SectionHead({ at, kicker, title, id, action }: { at?: number; kicker: string; title: string; id: string; action?: React.ReactNode }) {
   return (
-    <div className="rule-B grid grid-cols-[48px_minmax(0,1fr)] items-end gap-1 pb-2">
+    <div className="rule-B pair items-end gap-x-1 gap-y-1 pb-2 [--min:10rem] [--side:48px]">
       <span className="head text-[26px] leading-none">{at !== undefined ? `${two(at)}′` : ""}</span>
       <div>
-        <div className="flex items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-2">
           <Kicker>{kicker}</Kicker>
           {action}
         </div>
@@ -145,9 +145,9 @@ function TimelineSection({ plan, linked, warmupShown, actions }: { plan: Partial
   const tl = plan.timeline;
   return (
     <section id="time" aria-labelledby="time-h" className="pt-[18px]">
-      <div className="rule-B flex items-baseline justify-between pb-1.5">
+      <div className="rule-B flex flex-wrap items-baseline justify-between gap-x-3 pb-1.5">
         <h2 id="time-h" className="head m-0 text-2xl">Timeline</h2>
-        <span className="flex items-baseline gap-3">
+        <span className="flex flex-wrap items-baseline gap-x-3">
           {tl && (
             <span className="head text-[17px] font-semibold normal-case">
               {tl.totalMinutes} min · {tl.provisional ? "provisional" : STATUS_WORD[tl.status] ?? tl.status}
@@ -169,11 +169,11 @@ function TimelineSection({ plan, linked, warmupShown, actions }: { plan: Partial
             <span className="head text-[19px]">
               {two(b.startMin)}–{two(b.endMin)}
             </span>
-            <span className="text-base">{b.label}</span>
-            <span className="text-right text-[15px] text-sub">{b.endMin - b.startMin}</span>
+            <span className="text-base narrow:col-span-2 narrow:row-start-2">{b.label}</span>
+            <span className="text-right text-[15px] text-sub narrow:col-start-2 narrow:row-start-1">{b.endMin - b.startMin}</span>
           </>
         );
-        const cls = "rule-b grid min-h-11 grid-cols-[66px_minmax(0,1fr)_36px] items-center no-underline";
+        const cls = "rule-b grid min-h-11 grid-cols-[66px_minmax(0,1fr)_36px] items-center no-underline narrow:grid-cols-[66px_minmax(0,1fr)] narrow:py-1.5";
         return anchor ? (
           <a key={i} href={`#${anchor}`} className={cls}>
             {row}
@@ -207,7 +207,7 @@ function AccentLabel({ label, note }: { label: string; note: string | null }) {
 
 function TierRow({ tier, line, note }: { tier: TierKey; line: string; note: string | null }) {
   return (
-    <div className="rule-b grid grid-cols-[84px_minmax(0,1fr)] py-2.5">
+    <div className="rule-b pair gap-y-1 py-2.5 [--side:84px]">
       {note ? <AccentLabel label={TIER_LABEL[tier]} note={note} /> : <dt className="head text-lg">{TIER_LABEL[tier]}</dt>}
       <dd className="m-0 text-base leading-snug">{line}</dd>
     </div>
@@ -216,7 +216,7 @@ function TierRow({ tier, line, note }: { tier: TierKey; line: string; note: stri
 
 function InjuryRow({ injury, text }: { injury: Injury; text: string }) {
   return (
-    <div className="rule-b grid grid-cols-[84px_minmax(0,1fr)] py-2.5">
+    <div className="rule-b pair gap-y-1 py-2.5 [--side:84px]">
       <AccentLabel label={injury.label} note={injuryNote(injury)} />
       <dd className="m-0 text-base leading-snug">{text}</dd>
     </div>
@@ -231,10 +231,10 @@ function WarmupSection({ plan, at, actions }: { plan: Partial<Plan>; at?: number
   const title = w ? w.blocks.map((b) => b.name).join(", ") : "Warm-up";
   return (
     <section id="warmup" aria-labelledby="w-h" className="pt-7">
-      <div className="rule-B grid grid-cols-[48px_minmax(0,1fr)] items-end gap-1 pb-2">
+      <div className="rule-B pair items-end gap-x-1 gap-y-1 pb-2 [--min:10rem] [--side:48px]">
         <span className="head text-[26px] leading-none">{at !== undefined ? `${two(at)}′` : ""}</span>
         <div>
-          <div className="flex items-baseline justify-between gap-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2">
             {w ? <Kicker>{`Warm-up · ${w.minutes} min`}</Kicker> : <span />}
             {actions && w && <ChangeLink onClick={() => actions.change("warmup")} />}
           </div>
@@ -250,7 +250,7 @@ function WarmupSection({ plan, at, actions }: { plan: Partial<Plan>; at?: number
           <h3 className="head mb-1 mt-4 text-lg">Targets</h3>
           <dl className="m-0">
             {w.targets.map((t, i) => (
-              <div key={i} className="rule-b grid grid-cols-[110px_minmax(0,1fr)] gap-2 py-2">
+              <div key={i} className="rule-b pair gap-y-1 py-2 [--side:110px]">
                 <dt className="head text-lg leading-tight">{t.area}</dt>
                 <dd className="m-0 text-[15px] leading-snug text-sub">{t.why}</dd>
               </div>
@@ -285,7 +285,7 @@ function WarmupSection({ plan, at, actions }: { plan: Partial<Plan>; at?: number
 function GridTable({ part, scaling, plan }: { part: WodPart; scaling: PartScaling; plan: Partial<Plan> }) {
   const cols = scaling.columns ?? [];
   return (
-    <div className="-mx-4 mt-3 overflow-x-auto px-4">
+    <div className="-mx-4 mt-3 overflow-x-auto px-4" tabIndex={0} role="region" aria-label={`${part.name} scaling grid, scrolls sideways`}>
       <table className="w-full border-collapse text-left text-[15px]">
         <caption className="sr-only">Each tier per movement for {part.name}</caption>
         <thead>

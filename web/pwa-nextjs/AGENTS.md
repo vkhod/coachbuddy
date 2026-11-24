@@ -33,6 +33,7 @@ This directory contains `pwa-nextjs` (`:3000`), the TypeScript + Next.js 16 (App
    - The approved "programme sheet" look: Barlow Condensed (headings, times, tier names) and Barlow (text), self-hosted with `@fontsource`; tabular figures; hairline rules instead of cards; square corners.
    - `--accent` is used only for rows about athletes who need attention today (the `today` groups and injuries). Nothing else gets the accent.
    - Tap targets are at least 44 px; the viewport allows zoom.
+   - It must work at 200% page zoom and 200% font size (Phase 3 step 6). For a label column beside text use `.pair` (`globals.css`, with `[--side:84px]` and optionally `[--min:10rem]`), not a fixed `grid-cols-[84px_...]`: the text moves under the label when it would get too narrow. For other layouts that must change on small widths use the `narrow:` screen (below 360 CSS px). Do not use `truncate` on text the coach needs to read.
 3. **BYOK Vault Safety**:
    - Never store raw LLM API keys in `localStorage` after saving to the vault; send them to `gateway-go` (`:8080`) for AES-256-GCM encryption and display only masked key badges returned by the API.
 4. **No Client-Side Fallbacks**:

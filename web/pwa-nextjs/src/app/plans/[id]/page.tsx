@@ -85,15 +85,15 @@ export default function PlanPage() {
   return (
     <Screen>
       <header className="rule-B sticky top-0 z-10 bg-paper">
-        <div className="flex h-14 items-center pl-1 pr-1">
+        <div className="flex min-h-14 flex-wrap items-center pl-1 pr-1">
           <Link href="/history" aria-label="Back to history" className="tap flex items-center justify-center">
             <BackIcon />
           </Link>
-          <h1 className="head m-0 flex-1 truncate text-2xl">{planTitle(plan)}</h1>
+          <h1 className="head m-0 min-w-0 flex-1 py-1 text-2xl leading-tight [overflow-wrap:anywhere] narrow:order-last narrow:basis-full narrow:px-3 narrow:pb-2 narrow:pt-0">{planTitle(plan)}</h1>
           <Link
             href={`/plans/${plan.planId}/versions`}
             aria-label={`Version ${plan.revision}, see all versions`}
-            className="head tap flex items-center justify-center text-lg normal-case underline underline-offset-4"
+            className="head tap flex items-center justify-center text-lg normal-case underline underline-offset-4 narrow:ml-auto"
           >
             v{plan.revision}
           </Link>

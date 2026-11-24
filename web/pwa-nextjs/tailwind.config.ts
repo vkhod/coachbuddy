@@ -6,6 +6,11 @@ const config: Config = {
   content: ["./src/app/**/*.{ts,tsx}", "./src/components/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      // Below the narrowest common phone width (360 CSS px), which on a 390 px phone
+      // means page zoom or a larger system font of about 110% and more.
+      screens: {
+        narrow: { raw: "(max-width: 359px)" },
+      },
       colors: {
         paper: "var(--paper)",
         ink: "var(--ink)",

@@ -40,9 +40,9 @@ function RunRow({ run }: { run: AgentRunEntry }) {
     run.tools?.length ? `tools: ${run.tools.join(", ")}` : "",
   ].filter(Boolean);
   return (
-    <li className="rule-b grid grid-cols-[88px_minmax(0,1fr)] gap-2 py-2">
+    <li className="rule-b pair gap-y-1 py-2 [--side:88px]">
       <span className="head text-lg">{SECTION_LABEL[run.section] ?? run.section}</span>
-      <span className="text-[15px]">
+      <span className="text-[15px] [overflow-wrap:anywhere]">
         <span className={failed ? "font-semibold" : ""}>{failed ? "Failed" : run.state === "done" ? "Done" : run.state}</span>
         <span className="text-sub"> · {facts.join(" · ")}</span>
         {failed && run.error && <span className="block text-sm">{run.error}</span>}
@@ -78,8 +78,8 @@ export default function AgentRunsPage() {
         {records?.map((r) => (
           <section key={`${r.planId}:${r.revision}`} className="pt-6" aria-label={`${r.planTitle || "Plan"}, version ${r.revision}`}>
             <div className="rule-B flex items-baseline justify-between gap-3 pb-1.5">
-              <h2 className="head m-0 min-w-0 truncate text-2xl">
-                <Link href={`/plans/${r.planId}`} className="no-underline">
+              <h2 className="head m-0 min-w-0 text-2xl [overflow-wrap:anywhere]">
+                <Link href={`/plans/${r.planId}`} className="inline-flex min-h-11 items-center no-underline">
                   {r.planTitle || "Untitled plan"}
                 </Link>
               </h2>
