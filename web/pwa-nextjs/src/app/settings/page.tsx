@@ -13,6 +13,7 @@ import { ApiError, deleteKey, listKeys, listModels, updateProfile } from "@/lib/
 import type { ApiKey, ModelCatalog } from "@/lib/gateway-types";
 import { clearToken } from "@/lib/session";
 import { dropKeptPages } from "@/components/ServiceWorker";
+import { clearOffline } from "@/lib/offline";
 import { useCoach } from "@/lib/useCoach";
 
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
@@ -166,6 +167,7 @@ export default function SettingsPage() {
           onClick={() => {
             clearToken();
             dropKeptPages();
+            void clearOffline();
             router.replace("/login");
           }}
           className="head tap mt-6 h-12 w-full rounded-sm border border-ink bg-transparent text-lg text-ink"
