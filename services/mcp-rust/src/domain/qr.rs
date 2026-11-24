@@ -26,7 +26,8 @@ pub fn generate_qr_svg(input: QrGenerateInput) -> Result<QrGenerateOutput, Strin
 fn render_matrix_to_svg(code: &QrCode, display_size: u32) -> String {
     let width = code.width();
     let colors = code.to_colors();
-    let quiet_zone = 3usize;
+    // Four modules of white around the code: the minimum the QR standard asks for.
+    let quiet_zone = 4usize;
     let total_modules = width + quiet_zone * 2;
     let cell = 10usize;
     let view_size = total_modules * cell;
@@ -43,13 +44,13 @@ fn render_matrix_to_svg(code: &QrCode, display_size: u32) -> String {
         }
     }
 
-    // High-contrast dark modules (#0B0F17) on a pure white (#FFFFFF) QR canvas
-    // surrounded by the signature CoachBuddy Volt (#CCFF00) accent border and dark frame (#0B0F17).
+    // Programme sheet look: ink modules (#121212) on plain white, square corners,
+    // no frame. White, not the paper colour, because scanners read it best and it
+    // fits any box's branding.
     format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {view_size} {view_size}" width="{display_size}" height="{display_size}" shape-rendering="crispEdges"><rect width="100%" height="100%" rx="18" fill="#0B0F17"/><rect x="8" y="8" width="{inner}" height="{inner}" rx="14" fill="#FFFFFF" stroke="#CCFF00" stroke-width="4"/><path d="{path_data}" fill="#0B0F17"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {view_size} {view_size}" width="{display_size}" height="{display_size}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#FFFFFF"/><path d="{path_data}" fill="#121212"/></svg>"##,
         view_size = view_size,
         display_size = display_size,
-        inner = view_size.saturating_sub(16),
         path_data = path_data
     )
 }
@@ -59,7 +60,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_qr_svg_produces_high_contrast_volt_frame() {
+    fn test_generate_qr_svg_is_ink_on_white_without_a_frame() {
         let input = QrGenerateInput {
             data: "https://coachbuddy.app/s/abc123".to_string(),
             size: 300,
@@ -67,9 +68,29 @@ mod tests {
         let output = generate_qr_svg(input).expect("valid URL encodes");
         assert_eq!(output.size, 300);
         assert!(output.svg.contains("<svg"));
-        assert!(output.svg.contains("stroke=\"#CCFF00\""));
         assert!(output.svg.contains("fill=\"#FFFFFF\""));
-        assert!(output.svg.contains("fill=\"#0B0F17\""));
+        assert!(output.svg.contains("fill=\"#121212\""));
+        // The old Volt border, dark frame and rounded corners are gone.
+        for old in ["#CCFF00", "#0B0F17", "stroke", "rx="] {
+            assert!(
+                !output.svg.contains(old),
+                "unexpected {old} in {}",
+                output.svg
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_qr_svg_keeps_a_four_module_quiet_zone() {
+        let output = generate_qr_svg(QrGenerateInput {
+            data: "https://cocoach.vkhod.dev/s/cb-0123456789ab".to_string(),
+            size: 256,
+        })
+        .expect("valid URL encodes");
+        // No dark module starts before x = 4 cells of 10 units.
+        let first = output.svg.split("d=\"M").nth(1).expect("path data");
+        let x: usize = first.split(' ').next().unwrap().parse().unwrap();
+        assert!(x >= 40, "first module at x={x}");
     }
 
     #[test]
