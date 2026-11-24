@@ -16,6 +16,10 @@ Without `BRANDING_FILE` the app is Coach Buddy. With it, the file must be valid:
 
 Changes to the file or the images apply after a restart.
 
+## Example
+
+`attakashaka/` is a complete branded install (the box the app was built for): see its README.
+
 ## Fields
 
 See `example.json`. Only `name` is required.
@@ -24,7 +28,7 @@ See `example.json`. Only `name` is required.
 |---|---|
 | `name` | Box name, 1 to 40 characters. Page title, and the header when there is no logo. |
 | `shortName` | Home screen label, up to 12 characters. Default: the first 12 characters of `name`. |
-| `logo` | Wide logo for the header and the share page, shown 32 px high. A file name next to `branding.json` (no folders): `.svg`, `.png`, `.jpg`, `.jpeg` or `.webp`, up to 1 MB. A logo on a transparent or `paper`-coloured background looks right. |
+| `logo` | Wide logo for the header and the share page, shown 40 px high (up to 220 px wide). A file name next to `branding.json` (no folders): `.svg`, `.png`, `.jpg`, `.jpeg` or `.webp`, up to 1 MB. A logo on a transparent or `paper`-coloured background looks right. |
 | `icon` | Square app icon (browser tab, home screen). Same file rules. Default: the Coach Buddy icon. |
 | `colours` | Any of `paper` (page background), `ink` (text, rules, buttons), `sub` (secondary text), `rule` (hairlines), `accent` (only the rows about athletes who need attention today: injuries and the `today` groups), `card` (input fields). Hex values like `#1a2b3c`. Missing ones keep the Coach Buddy colours. |
 
