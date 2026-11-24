@@ -21,7 +21,13 @@ export async function generateMetadata(): Promise<Metadata> {
     title: b.name,
     description: "WOD plans for CrossFit coaches: warm-up, scaling tiers, injuries and a class timeline from a screenshot.",
     manifest: "/manifest.webmanifest",
-    icons: { icon: `/brand/icon?v=${v}`, apple: `/brand/icon?v=${v}` },
+    icons: {
+      icon: [
+        { url: `/brand/icon?v=${v}` },
+        { url: `/brand/icon-192.png?v=${v}`, sizes: "192x192", type: "image/png" },
+      ],
+      apple: { url: `/brand/apple-icon.png?v=${v}`, sizes: "180x180", type: "image/png" },
+    },
     appleWebApp: { capable: true, statusBarStyle: "default", title: b.shortName },
   };
 }

@@ -123,6 +123,8 @@ jobs:
           cache-dependency-path: web/pwa-nextjs/package-lock.json
       - run: npm ci
       - run: npm run build
+      - name: Check manifest and icons
+        run: npm run check:pwa
 
   schema:
     name: schema (contract)

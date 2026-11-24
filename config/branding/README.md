@@ -29,7 +29,7 @@ See `example.json`. Only `name` is required.
 | `name` | Box name, 1 to 40 characters. Page title, and the header when there is no logo. |
 | `shortName` | Home screen label, up to 12 characters. Default: the first 12 characters of `name`. |
 | `logo` | Wide logo for the header and the share page, shown 40 px high (up to 220 px wide). A file name next to `branding.json` (no folders): `.svg`, `.png`, `.jpg`, `.jpeg` or `.webp`, up to 1 MB. A logo on a transparent or `paper`-coloured background looks right. |
-| `icon` | Square app icon (browser tab, home screen). Same file rules. Default: the Coach Buddy icon. |
+| `icon` | Square app icon (browser tab, home screen). Same file rules. Default: the Coach Buddy icon. The app renders the PNGs Android and iOS need from it (192 and 512 px, a maskable one with the picture at 80% on `paper`, and a 180 px iOS icon), so one file is enough; an SVG or a PNG of at least 512 px stays sharp. |
 | `colours` | Any of `paper` (page background), `ink` (text, rules, buttons), `sub` (secondary text), `rule` (hairlines), `accent` (only the rows about athletes who need attention today: injuries and the `today` groups), `card` (input fields). Hex values like `#1a2b3c`. Missing ones keep the Coach Buddy colours. |
 
 Contrast is checked at start: `ink` on `paper` and on `card`, `sub` on `paper` and `accent` on `paper` must each be at least 4.5:1 (WCAG AA for body text).
