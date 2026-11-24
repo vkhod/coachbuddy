@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, regenerateSection, type RefinableSection } from "@/lib/api";
 import { ErrorNote } from "./ui";
+import { OFFLINE_BUILD_NOTE, useOnline } from "@/lib/online";
 
 export const CHIPS = [
   "Shorter",
@@ -56,6 +57,7 @@ export function ChangeSheet({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [text, setText] = useState(mode === "retry" ? "Try again" : "");
   const [busy, setBusy] = useState(false);
+  const online = useOnline();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -134,8 +136,9 @@ export function ChangeSheet({
           {mode === "add-injury" && <span className="text-sm text-sub">Describe the injury, not the athlete.</span>}
         </div>
         {error && <ErrorNote message={error} />}
+        {!online && <p className="m-0 border-l-2 border-ink pl-3 text-base">{OFFLINE_BUILD_NOTE}</p>}
         <div className="mt-1 flex items-center gap-6">
-          <button type="submit" disabled={busy || !text.trim()} className="btn-primary flex-1">
+          <button type="submit" disabled={busy || !text.trim() || !online} className="btn-primary flex-1">
             {busy ? "Sending" : action}
           </button>
           <button type="button" onClick={() => dialogRef.current?.close()} className="lnk tap bg-transparent p-0 text-[15px] text-ink">

@@ -8,6 +8,7 @@ import "@fontsource/barlow-condensed/600.css";
 import "@fontsource/barlow-condensed/700.css";
 import "./globals.css";
 import { BrandProvider } from "@/components/Brand";
+import { ServiceWorker } from "@/components/ServiceWorker";
 import { cssVariables, getBranding, publicBranding } from "@/lib/branding";
 
 // Branding is read from the mounted file when the server runs, not at build time,
@@ -47,7 +48,10 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <style id="brand-colours">{cssVariables(b)}</style>
       </head>
       <body className="min-h-dvh bg-paper font-sans text-ink">
-        <BrandProvider value={publicBranding(b)}>{children}</BrandProvider>
+        <BrandProvider value={publicBranding(b)}>
+          {children}
+          <ServiceWorker />
+        </BrandProvider>
       </body>
     </html>
   );
