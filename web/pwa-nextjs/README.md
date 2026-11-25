@@ -26,7 +26,7 @@ A box's name, colours, logo and icon can replace Coach Buddy's without a rebuild
 
 ## Installing and offline
 
-The app installs from the browser (Android Chrome: menu, Install app). A service worker keeps the app's own files and the Capture, History, Sign in and first-key pages on the phone, so the app opens without a connection. Building or changing a plan always needs a connection; offline, those buttons are disabled with a note. When a new version is deployed, a bar at the bottom offers Reload; the app never switches versions under the coach by itself. The worker runs only in a production build (`npm run build`, then the standalone server), not under `npm run dev`. Browsers allow a service worker only on HTTPS or `localhost`.
+The app installs from the browser (Android Chrome: menu, Install app). A service worker keeps the app's own files and the Capture, History, Sign in and first-key pages on the phone, so the app opens without a connection. Every plan the coach opens is also saved on the phone (the last 100 opened), so it can be read in airplane mode: History lists the saved plans and the plan page says it is the copy saved on this phone. Signing out deletes them. Building or changing a plan always needs a connection; offline, those buttons are disabled with a note. When a new version is deployed, a bar at the bottom offers Reload; the app never switches versions under the coach by itself. The worker runs only in a production build (`npm run build`, then the standalone server), not under `npm run dev`. Browsers allow a service worker only on HTTPS or `localhost`.
 
 ## Accessibility
 
