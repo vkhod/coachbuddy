@@ -37,7 +37,7 @@ function useActiveAnchor(ids: string[]): string | null {
 export default function PlanPage() {
   const { id } = useParams<{ id: string }>();
   useCoach();
-  const { plan, error, reload } = usePlan(id);
+  const { plan, error, reload, saved } = usePlan(id);
   const [sharing, setSharing] = useState(false);
   const [sheet, setSheet] = useState<{ section: Refinable; mode: ChangeMode } | null>(null);
 
@@ -73,8 +73,9 @@ export default function PlanPage() {
   const generating = isGenerating(plan);
   const context = todaySummary(plan);
   // Changes wait until the plan is settled; the gateway answers 409 otherwise.
+  // A saved copy is read only: changes need the gateway.
   const actions: PlanActions | undefined =
-    generating || !plan.wod
+    generating || !plan.wod || saved
       ? undefined
       : {
           change: (section) => setSheet({ section, mode: "change" }),
@@ -101,7 +102,7 @@ export default function PlanPage() {
             type="button"
             aria-label="Share"
             onClick={() => setSharing(true)}
-            disabled={!plan.wod}
+            disabled={!plan.wod || saved}
             className="tap flex items-center justify-center bg-transparent text-ink disabled:opacity-30"
           >
             <ShareIcon />
@@ -129,6 +130,11 @@ export default function PlanPage() {
             {context && <p className="head m-0 text-xl text-accent">{context}</p>}
             <p className="m-0 text-[15px] text-sub">{plan.input.classMinutes} min class</p>
           </section>
+        )}
+        {saved && (
+          <p role="status" className="mb-0 mt-4 border-l-2 border-ink pl-3 text-base">
+            Offline. This is the copy saved on this phone, v{plan.revision}. Changes and sharing need a connection.
+          </p>
         )}
         {error && <ErrorNote message={error.message} onRetry={reload} />}
         {generating && <Progress plan={plan} />}

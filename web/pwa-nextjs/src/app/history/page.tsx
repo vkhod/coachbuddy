@@ -8,6 +8,7 @@ import { ApiError, listPlans } from "@/lib/api";
 import type { Plan } from "@/lib/contract/plan";
 import { isGenerating, isFailed, SECTION_ORDER } from "@/lib/plan";
 import { useCoach } from "@/lib/useCoach";
+import { savedPlanIds, savedPlans } from "@/lib/offline";
 
 function shortDate(plan: Plan): string {
   const m = plan.wod?.date?.match(/^\d{4}-(\d{2})-(\d{2})$/);
@@ -33,16 +34,42 @@ export default function HistoryPage() {
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // Plans saved on this phone (src/lib/offline.ts): marked "Available offline",
+  // and the whole list when the gateway cannot be reached.
+  const [onPhone, setOnPhone] = useState<Set<string>>(new Set());
+  const [fromPhone, setFromPhone] = useState(false);
 
   const load = () => {
     setError(null);
     listPlans()
-      .then(setPlans)
-      .catch((e) => setError(e instanceof ApiError ? e.message : String(e)));
+      .then((list) => {
+        setFromPhone(false);
+        setPlans(list);
+      })
+      .catch(async (e) => {
+        if (e instanceof ApiError && e.status === 0) {
+          const saved = await savedPlans();
+          if (saved.length) {
+            setFromPhone(true);
+            setPlans(saved);
+            return;
+          }
+        }
+        setError(e instanceof ApiError ? e.message : String(e));
+      });
+    void savedPlanIds().then(setOnPhone);
   };
   useEffect(() => {
     if (coach) load();
   }, [coach]);
+
+  useEffect(() => {
+    if (!fromPhone) return;
+    const onOnline = () => load();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromPhone]);
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -80,6 +107,11 @@ export default function HistoryPage() {
           onChange={(e) => setQuery(e.target.value)}
           className="field mt-4"
         />
+        {fromPhone && (
+          <p role="status" className="mb-0 mt-4 border-l-2 border-ink pl-3 text-base">
+            Offline. These are the plans saved on this phone. Building a plan needs a connection.
+          </p>
+        )}
         {error && <ErrorNote message={error} onRetry={load} />}
         {!plans && !error && <Loading label="Loading plans" />}
         {shown && shown.length === 0 && (
@@ -93,7 +125,10 @@ export default function HistoryPage() {
                   <span className="head text-2xl">{shortDate(p)}</span>
                   <span>
                     <span className="block text-base leading-snug">{summary(p)}</span>
-                    <span className="text-sm text-sub">{status(p)}</span>
+                    <span className="text-sm text-sub">
+                      {status(p)}
+                      {onPhone.has(p.planId) && " · available offline"}
+                    </span>
                   </span>
                 </Link>
               </li>
