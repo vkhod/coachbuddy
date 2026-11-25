@@ -6,11 +6,13 @@
 //   - the manifest has id, scope, start_url, display and the three PNG icons;
 //   - every icon is a PNG of the size the manifest says;
 //   - the maskable icon has only the paper colour outside its middle 80%;
-//   - the apple-touch-icon is 180 px with no transparency (iOS fills it black).
+//   - the apple-touch-icon is 180 px with no transparency (iOS fills it black);
+//   - /sw.js (Phase 4 step 2) answers as JavaScript, carries .next/BUILD_ID in
+//     its version, and every build file it precaches answers 200.
 // Exits 1 with the reasons when a check fails.
 
 import { spawn } from "node:child_process";
-import { cpSync, existsSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
@@ -29,6 +31,8 @@ if (!existsSync(path.join(standalone, "server.js"))) {
   process.exit(1);
 }
 // next build leaves these out of the standalone folder (the Dockerfile copies them too).
+// Remove the old copy first: a file left from an earlier build would be precached.
+rmSync(path.join(standalone, ".next", "static"), { recursive: true, force: true });
 cpSync(path.join(root, "public"), path.join(standalone, "public"), { recursive: true });
 cpSync(path.join(root, ".next", "static"), path.join(standalone, ".next", "static"), { recursive: true });
 
@@ -117,10 +121,37 @@ async function checkBranding({ label, file, paper }, port) {
     const html = await (await fetch(`${base}/login`)).text();
     if (!html.includes('rel="manifest"')) fail(label, "page has no manifest link");
     if (!html.includes("/brand/apple-icon.png")) fail(label, "page has no apple-touch-icon link");
-    console.log(`${label}: manifest and ${toCheck.length} icons checked`);
+    const assets = await checkWorker(label, base);
+    console.log(`${label}: manifest, ${toCheck.length} icons and the service worker (${assets} files) checked`);
   } finally {
     proc.kill();
   }
+}
+
+const buildId = readFileSync(path.join(root, ".next", "BUILD_ID"), "utf8").trim();
+
+async function checkWorker(label, base) {
+  const res = await fetch(`${base}/sw.js`);
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok || !/^(application|text)\/javascript/.test(type)) {
+    fail(label, `/sw.js: HTTP ${res.status} ${type}`);
+    return 0;
+  }
+  const script = await res.text();
+  const version = JSON.parse(script.match(/^const VERSION = (".*");$/m)?.[1] ?? "null");
+  if (!version?.startsWith(`${buildId}-`)) fail(label, `/sw.js version ${version} does not start with BUILD_ID ${buildId}`);
+  const assets = JSON.parse(script.match(/^const ASSETS = (\[.*\]);$/m)?.[1] ?? "[]");
+  if (!assets.length) fail(label, "/sw.js precaches no build files");
+  for (const a of assets) {
+    const r = await fetch(base + a);
+    if (!r.ok) fail(label, `/sw.js lists ${a}, which answers HTTP ${r.status}`);
+  }
+  const pages = JSON.parse(script.match(/^const PAGES = (\[.*\]);$/m)?.[1] ?? "[]");
+  for (const p of pages) {
+    const r = await fetch(base + p, { redirect: "manual" });
+    if (r.status !== 200) fail(label, `/sw.js keeps ${p}, which answers HTTP ${r.status}`);
+  }
+  return assets.length;
 }
 
 let port = 3910;

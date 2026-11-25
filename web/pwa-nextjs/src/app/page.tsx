@@ -9,6 +9,7 @@ import { AppHeader, CameraIcon, ClassLength, ErrorNote, Screen } from "@/compone
 import { ApiError, createPlan, listKeys } from "@/lib/api";
 import { toUploadDataUrl } from "@/lib/image";
 import { useCoach } from "@/lib/useCoach";
+import { OFFLINE_BUILD_NOTE, useOnline } from "@/lib/online";
 
 function today(): string {
   const d = new Date();
@@ -25,6 +26,7 @@ export default function CapturePage() {
   const [minutes, setMinutes] = useState<number | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const online = useOnline();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -85,7 +87,8 @@ export default function CapturePage() {
         </div>
         {fileInput}
 
-        {coachError && <ErrorNote message={coachError} onRetry={() => window.location.reload()} />}
+        {!online && <p className="mb-0 mt-4 border-l-2 border-ink pl-3 text-base">{OFFLINE_BUILD_NOTE}</p>}
+        {coachError && online && <ErrorNote message={coachError} onRetry={() => window.location.reload()} />}
         {hasKey === false && (
           <p className="mb-0 mt-4 border-l-2 border-ink pl-3 text-base">
             Add your AI key before the first plan.{" "}
@@ -151,7 +154,7 @@ export default function CapturePage() {
 
             <div className="min-h-6 flex-1" />
             {error && <ErrorNote message={error} />}
-            <button type="button" onClick={build} disabled={busy || !minutes} className="btn-primary mt-4">
+            <button type="button" onClick={build} disabled={busy || !minutes || !online} className="btn-primary mt-4">
               {busy ? "Sending" : "Build plan"}
             </button>
             <p className="mb-0 mt-2.5 text-sm text-sub">Building needs a connection.</p>
