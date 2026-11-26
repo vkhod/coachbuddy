@@ -35,7 +35,7 @@ docker compose -f compose.yml -f compose.dev.yml up --build
 Sign up in the app, then add a Gemini, OpenAI or Anthropic key on the welcome screen; plans use it. To run the app under a box's name and logo, see [config/branding/README.md](config/branding/README.md).
 
 ### Option B: Running a Single Service on the Host
-Services need their settings from the environment (see `.env.example`); there are no default secrets. The databases come from Option A (Postgres creates its tables from `infra/postgres/init.sql` on first start).
+Services need their settings from the environment (see `.env.example`); there are no default secrets. The databases come from Option A. The gateway creates and updates the Postgres tables itself when it starts (`services/gateway-go/internal/migrations/`).
 
 1. **Go API Gateway (`:8080`)**:
    ```bash

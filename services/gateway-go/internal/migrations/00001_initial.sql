@@ -1,4 +1,7 @@
--- CoachBuddy PostgreSQL Schema Initialization
+-- +goose Up
+-- The schema as infra/postgres/init.sql created it before Phase 5. Every
+-- statement is IF NOT EXISTS, so a database created from init.sql passes
+-- through this migration unchanged and is then recorded at version 1.
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- 1. Coaches (Users) Table
@@ -53,3 +56,6 @@ CREATE TABLE IF NOT EXISTS shared_links (
 CREATE INDEX IF NOT EXISTS idx_llm_api_keys_coach ON llm_api_keys(coach_id);
 CREATE INDEX IF NOT EXISTS idx_agent_prefs_coach ON agent_model_prefs(coach_id);
 CREATE INDEX IF NOT EXISTS idx_shared_links_session ON shared_links(mongo_session_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS shared_links, agent_model_prefs, llm_api_keys, coaches;

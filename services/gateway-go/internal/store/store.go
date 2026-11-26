@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/coachbuddy/gateway-go/internal/migrations"
 	"strings"
 	"time"
 
@@ -114,6 +115,12 @@ func Open(ctx context.Context, vault *crypto.Vault, cfg Config) (*DataStore, err
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
 	ds.pg = pool
+	// The schema is versioned in internal/migrations and applied here, so a
+	// gateway never runs against tables older than its code expects.
+	if err := migrations.Up(ctx, pool); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("postgres: %w", err)
+	}
 
 	// DefaultDocumentM makes nested documents decode as maps instead of
 	// ordered key/value lists, so a session serialises to the JSON it was saved as.
