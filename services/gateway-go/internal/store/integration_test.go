@@ -3,8 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"github.com/coachbuddy/gateway-go/internal/migrations"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,7 +20,7 @@ import (
 //
 //	GATEWAY_TEST_POSTGRES_DSN, GATEWAY_TEST_MONGO_URI, GATEWAY_TEST_REDIS_URL
 //
-// Each test gets an empty Postgres schema (from infra/postgres/init.sql) and
+// Each test gets an empty Postgres schema (all migrations down, then up) and
 // its own MongoDB database.
 func openTestStore(t *testing.T) *DataStore {
 	t.Helper()
@@ -34,15 +34,13 @@ func openTestStore(t *testing.T) *DataStore {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	initSQL, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "infra", "postgres", "init.sql"))
-	if err != nil {
-		t.Fatalf("read init.sql: %v", err)
+	// Open has applied the migrations; take them all down and up again, so the
+	// test starts from empty tables and the Down sections are exercised too.
+	if err := migrations.Reset(ctx, ds.pg); err != nil {
+		t.Fatalf("migrations down: %v", err)
 	}
-	if _, err := ds.pg.Exec(ctx, `DROP TABLE IF EXISTS shared_links, agent_model_prefs, llm_api_keys, coaches CASCADE`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ds.pg.Exec(ctx, string(initSQL)); err != nil {
-		t.Fatalf("apply init.sql: %v", err)
+	if err := migrations.Up(ctx, ds.pg); err != nil {
+		t.Fatalf("migrations up: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = ds.db.Drop(context.Background())

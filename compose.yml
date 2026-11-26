@@ -20,7 +20,6 @@ services:
       POSTGRES_DB: coachbuddy
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U coachbuddy -d coachbuddy"]
       interval: 5s
